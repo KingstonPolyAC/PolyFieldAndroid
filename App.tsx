@@ -270,9 +270,9 @@ const PolyFieldApp = () => {
     // Calculate optimal scale based on actual throw data
     let optimalScale;
     if (filteredCoords.length > 0) {
-      // Find the furthest throw and add 30% padding for better visualization
+      // Find the furthest throw and add 10% padding for better visualization
       const maxDistance = Math.max(...filteredCoords.map(c => c.distance));
-      optimalScale = Math.ceil(maxDistance * 1.3); // Add 30% padding and round up
+      optimalScale = Math.ceil(maxDistance * 1.1); // Add 10% padding and round up
 
       // Ensure minimum scale for good circle visibility
       const minScale = Math.max(calibration.targetRadius * 15, 20); // At least 15x circle radius or 20m
@@ -1135,10 +1135,6 @@ const PolyFieldApp = () => {
                     <Text style={styles.noDataSubtext}>
                       Start measuring throws to see the heat map
                     </Text>
-                    <Text style={styles.scaleInfo}>
-                      Default scale: {getDefaultHeatMapScale(calibration.circleType)}m
-                      (80% of world record)
-                    </Text>
                   </View>
                 );
               }
@@ -1152,15 +1148,10 @@ const PolyFieldApp = () => {
                       <Text style={styles.statText}>Avg: {heatData.stats.averageDistance.toFixed(1)}m</Text>
                       <Text style={styles.statText}>Best: {heatData.stats.maxDistance.toFixed(1)}m</Text>
                     </View>
-                    <Text style={styles.scaleInfo}>
-                      Scale: {heatData.optimalScale}m {heatData.isAutoScaled ? '(Auto-scaled to data)' : '(80% WR)'}
-                    </Text>
                   </View>
 
                   <View style={styles.heatMapVisualization}>
-                    <View style={styles.circleCenter}>
-                      <Text style={styles.centerLabel}>Circle Centre</Text>
-                    </View>
+                    <View style={styles.circleCenter} />
                     {heatData.coordinates.map((coord, index) => {
                       // Scale coordinates to visualization area
                       const xPercent = 50 + ((coord.x - 0) / heatData.optimalScale) * 40;
@@ -2009,7 +2000,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 60,
+    minHeight: 80,
   },
 
   navButton: {
@@ -2247,7 +2238,7 @@ const styles = StyleSheet.create({
   },
 
   distanceText: {
-    fontSize: 12,
+    fontSize: 16,
     color: '#666',
     fontWeight: 'bold',
   },
