@@ -1,79 +1,220 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# PolyField
 
-# Getting Started
+<div align="center">
+  <img src="claude/logo.svg" alt="PolyField Logo" width="200"/>
+  
+  **Professional Athletic Field Measurement Application**
+  
+  *Precision measurement tools for track and field athletics*
+</div>
 
->**Note**: Make sure you have completed the [React Native - Environment Setup](https://reactnative.dev/docs/environment-setup) instructions till "Creating a new application" step, before proceeding.
+---
 
-## Step 1: Start the Metro Server
+## 📱 About PolyField
 
-First, you will need to start **Metro**, the JavaScript _bundler_ that ships _with_ React Native.
+PolyField is a professional React Native Android application designed for precise athletic field measurements. Built specifically for track and field events, it provides real-time measurement capabilities using Electronic Distance Measurement (EDM) devices, with comprehensive calibration and data visualization features.
 
-To start Metro, run the following command from the _root_ of your React Native project:
+### 🎯 Key Features
 
+- **🔴 Live/Demo Mode Toggle** - Switch between real device measurements and simulated data
+- **📐 Precision Measurement** - EDM device integration for accurate distance readings
+- **🎪 Event Support** - Specialized workflows for throws, jumps, and other field events
+- **📊 Heat Map Visualization** - Visual landing pattern analysis for throws
+- **📈 Session Statistics** - Real-time performance tracking and analytics
+- **🔧 Device Management** - Support for serial and network-connected EDM devices
+- **📱 Tablet Optimized** - Landscape-only interface designed for field use
+
+---
+
+## 🚀 Technology Stack
+
+- **Frontend**: React Native with TypeScript
+- **Backend**: Go with gomobile for device communication
+- **Platform**: Android (minimum SDK 21)
+- **Architecture**: Native module bridge for Go-Android integration
+- **Device Integration**: Serial (USB) and Network (TCP/IP) communication
+
+---
+
+## 📋 Prerequisites
+
+- **Node.js** (v16 or higher)
+- **React Native CLI**
+- **Android Studio** with SDK 34+
+- **Go** (v1.19 or higher)
+- **gomobile** tool for Go mobile development
+- **Java JDK 11** or higher
+
+---
+
+## 🛠️ Installation & Setup
+
+### 1. Clone the Repository
 ```bash
-# using npm
-npm start
-
-# OR using Yarn
-yarn start
+git clone https://github.com/KingstonPolyAC/PolyFieldAndroid.git
+cd PolyFieldAndroid
 ```
 
-## Step 2: Start your Application
-
-Let Metro Bundler run in its _own_ terminal. Open a _new_ terminal from the _root_ of your React Native project. Run the following command to start your _Android_ or _iOS_ app:
-
-### For Android
-
+### 2. Install Dependencies
 ```bash
-# using npm
-npm run android
-
-# OR using Yarn
-yarn android
+npm install
 ```
 
-### For iOS
-
+### 3. Build Go Mobile Library
 ```bash
-# using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
+cd android/go-mobile
+go mod tidy
+gomobile bind -target=android .
+cd ../..
 ```
 
-If everything is set up _correctly_, you should see your new app running in your _Android Emulator_ or _iOS Simulator_ shortly provided you have set up your emulator/simulator correctly.
+### 4. Android Setup
+```bash
+cd android
+./gradlew clean
+./gradlew assembleDebug
+```
 
-This is one way to run your app — you can also run it directly from within Android Studio and Xcode respectively.
+### 5. Install on Device
+```bash
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
 
-## Step 3: Modifying your App
+---
 
-Now that you have successfully run the app, let's modify it.
+## 📱 Usage
 
-1. Open `App.tsx` in your text editor of choice and edit some lines.
-2. For **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Developer Menu** (<kbd>Ctrl</kbd> + <kbd>M</kbd> (on Window and Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (on macOS)) to see your changes!
+### Quick Start Guide
 
-   For **iOS**: Hit <kbd>Cmd ⌘</kbd> + <kbd>R</kbd> in your iOS Simulator to reload the app and see your changes!
+1. **Launch PolyField** on your Android tablet
+2. **Select Event Type** - Choose between Throws, Jumps, or other field events
+3. **Configure Devices** - Set up EDM device connections (Serial/Network)
+4. **Calibration** - Perform field calibration using known reference points
+5. **Measurement** - Take live measurements or use demo mode for testing
+6. **Analysis** - View heat maps and session statistics
 
-## Congratulations! :tada:
+### Device Connection
 
-You've successfully run and modified your React Native App. :partying_face:
+#### Serial Devices (USB)
+- Connect EDM device via USB-to-Serial adapter
+- PolyField automatically detects available ports
+- Descriptive naming: "USB Serial Adapter (ttyUSB0)"
 
-### Now what?
+#### Network Devices (TCP/IP)
+- Configure IP address and port
+- Built-in ping test for connectivity verification
+- Real-time connection status monitoring
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [Introduction to React Native](https://reactnative.dev/docs/getting-started).
+---
 
-# Troubleshooting
+## 🏗️ Architecture
 
-If you can't get this to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+```
+PolyField/
+├── App.tsx                 # Main React Native application
+├── android/
+│   ├── app/
+│   │   ├── src/main/java/com/polyfieldandroid/
+│   │   │   ├── EDMModule.java          # Device communication
+│   │   │   ├── GoMobileModule.java     # Go bridge
+│   │   │   └── MainApplication.java    # App configuration
+│   │   └── libs/
+│   │       ├── mobile.aar              # Go mobile library
+│   │       └── polyfield.aar           # PolyField Go library
+│   └── go-mobile/
+│       ├── mobile.go                   # Go implementation
+│       └── go.mod                      # Go dependencies
+├── claude/
+│   └── polyfield.png                   # App logo/branding
+└── README.md                           # This file
+```
 
-# Learn More
+---
 
-To learn more about React Native, take a look at the following resources:
+## 🎨 Features in Detail
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+### Live vs Demo Mode
+- **Live Mode**: Connects to real EDM devices for actual measurements
+- **Demo Mode**: Generates realistic simulated data for training/testing
+- **Validation**: Live mode requires device connection before calibration
+
+### Measurement Workflow
+1. **Event Selection**: Choose measurement type and parameters
+2. **Device Setup**: Configure and test device connections
+3. **Calibration**: Set reference points and validate accuracy
+4. **Measurement**: Perform live measurements with real-time feedback
+5. **Analysis**: Review heat maps and statistical data
+
+### Heat Map Visualization
+- Real-time landing pattern visualization
+- Statistical overlays (average, best, total throws)
+- Coordinate system with distance markers
+- Export capabilities for further analysis
+
+---
+
+## 🔧 Development
+
+### Building for Release
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+Release APK location: `android/app/build/outputs/apk/release/app-release.apk`
+
+### Code Structure
+- **TypeScript**: Main application logic in App.tsx
+- **Java Native Modules**: Device communication bridge
+- **Go Backend**: gomobile library for device protocols
+- **Android Resources**: Proper manifest, styles, and branding
+
+---
+
+## 📦 Release Information
+
+- **Current Version**: 1.0
+- **Package Name**: com.polyfieldandroid
+- **Min SDK**: 21 (Android 5.0)
+- **Target SDK**: 34 (Android 14)
+- **Orientation**: Landscape only
+- **File Size**: ~33MB
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🏃‍♂️ About Kingston Polytechnic Athletic Club
+
+PolyField is developed by Kingston Polytechnic Athletic Club for professional track and field measurement applications. Our goal is to provide precise, reliable tools for athletic performance analysis and competition management.
+
+---
+
+## 📞 Support
+
+For technical support or feature requests:
+- 🐛 **Issues**: [GitHub Issues](https://github.com/KingstonPolyAC/PolyFieldAndroid/issues)
+- 📧 **Contact**: Open an issue for direct support
+- 📚 **Documentation**: See inline code comments and this README
+
+---
+
+<div align="center">
+  <strong>Built with ❤️ for Track & Field Athletics</strong>
+  <br>
+  <em>Precision • Performance • Professional</em>
+</div>
