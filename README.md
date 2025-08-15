@@ -1,18 +1,16 @@
 # PolyField Android v3.0
 
-A Jetpack Compose Android application for athletic field measurement and validation, built for the UK Athletics standards.
+A Jetpack Compose Android application for athletic field measurement and validation, built to UK Athletics and WA standards as of 2025.
 
 ## Latest Release - v3.0
 
 ### Download Links
-- **APK (Direct Install)**: `releases/v3.0/app-debug.apk`
-- **AAB (Play Store)**: `releases/v3.0/app-debug.aab`
+- In Releases
 
 ### Key Features
 - **Dual EDM Reading Protocol**: 100ms delay between readings, 10s timeout per read (max 20s total)
 - **Real Device Integration**: No simulation fallbacks in live mode
-- **UKA Standards**: Shot, Discus, Hammer circles + 8m Javelin Arc
-- **Material 3 Design**: Jetpack Compose UI with #1976D2 primary blue
+- **UKA & WA Standards**: Shot, Discus, Hammer circles + 8m Javelin Arc
 - **Device Support**: EDM, Wind Gauge, Scoreboard via USB/Serial/Network
 
 ## Architecture
@@ -89,18 +87,20 @@ go-mobile/mobile/
 5. **Average Result**: Return mean of both readings if valid
 
 ### Event Types
-- **Throws**: Shot, Discus, Hammer, Javelin Arc (8m radius)
+- **Throws**: Shot, Discus, Hammer, Javelin Arc
 - **Horizontal Jumps**: Long Jump, Triple Jump (with wind gauge)
 
 ### Device Configuration
 - **USB**: Android USB Host API integration
 - **Serial**: Configurable baud rates, multiple ports
 - **Network**: TCP/UDP socket communication
+-**Hands Off**: Auto detection of EDM device in serial mode and auto configuration to connect
+
 
 ## Navigation Flow
 
 ### Throws (7 screens)
-1. Event Selection → 2. Circle Selection → 3. Device Setup → 4. Centre Calibration → 5. Edge Verification → 6. Measurement → 7. Results
+1. Event Selection → 2. Circle Selection → 3. Device Setup → 4. Centre Calibration → 5. Edge Verification → 6. Measurement → 7. Heat Map
 
 ### Horizontal Jumps (3 screens)  
 1. Event Selection → 2. Device Setup → 3. Measurement
@@ -115,7 +115,7 @@ go-mobile/mobile/
 - `android.hardware.usb.host` feature
 
 ## License
-Copyright Kingston Polytechnic Athletic Club
+Copyright Kingston Athletic club and Polytechnic Harriers 2025
 
 ## Support
-For development questions or device integration issues, refer to the backup reference implementation in `backupUI/App.tsx`.
+web@kingstonandpoly.org
