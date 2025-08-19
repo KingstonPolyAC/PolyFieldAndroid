@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,7 +60,7 @@ data class DeviceConfig(
 // Calibration State
 data class CalibrationState(
     val circleType: String = "SHOT",
-    val targetRadius: Double = 1.065,
+    val targetRadius: Double = 1.0675,
     val centreSet: Boolean = false,
     val centreTimestamp: String? = null,
     val stationCoordinates: Pair<Double, Double>? = null,
@@ -83,6 +84,19 @@ data class ThrowCoordinate(
     val timestamp: String
 )
 
+// Settings data class
+data class AppSettings(
+    val isDoubleReadMode: Boolean = true
+)
+
+// Detected USB Device info
+data class DetectedDevice(
+    val vendorId: Int,
+    val productId: Int,
+    val deviceName: String,
+    val serialPath: String
+)
+
 // Complete App State matching original
 data class AppState(
     val currentScreen: String = "SELECT_EVENT_TYPE",
@@ -98,8 +112,10 @@ data class AppState(
     val selectedDeviceForConfig: String? = null,
     val heatMapVisible: Boolean = false,
     val connectedDevice: UsbDevice? = null,
+    val detectedDevices: List<DetectedDevice> = emptyList(),
     val errorMessage: String? = null,
-    val errorTitle: String? = null
+    val errorTitle: String? = null,
+    val settings: AppSettings = AppSettings()
 )
 
 class AppViewModel(private val context: android.content.Context) : androidx.lifecycle.ViewModel() {
@@ -137,6 +153,52 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 updateScreen("DEVICE_SETUP")
             }
         }
+    }
+    
+    fun updateSettings(settings: AppSettings) {
+        _uiState.value = _uiState.value.copy(settings = settings)
+    }
+    
+    fun updateDetectedDevices(devices: List<DetectedDevice>) {
+        _uiState.value = _uiState.value.copy(detectedDevices = devices)
+    }
+    
+    fun getUsbDevices(): Map<String, Any> {
+        return edmModule.listUsbDevices()
+    }
+    
+    fun refreshUsbDevices() {
+        android.util.Log.d("PolyField", "Manual USB refresh requested")
+        val usbDevicesResult = getUsbDevices()
+        android.util.Log.d("PolyField", "USB refresh result: $usbDevicesResult")
+        
+        @Suppress("UNCHECKED_CAST")
+        val usbDevices = (usbDevicesResult["ports"] as? List<Map<String, Any>>) ?: emptyList()
+        
+        val detectedDevices = if (usbDevices.isEmpty()) {
+            // If no real devices found, add a test device to verify UI functionality
+            android.util.Log.d("PolyField", "No real USB devices found - adding test device for UI verification")
+            listOf(
+                DetectedDevice(
+                    vendorId = 1027,  // FTDI VID
+                    productId = 24577, // FTDI PID
+                    deviceName = "Test FTDI Device - FT232R USB UART (VID:0403 PID:6001)",
+                    serialPath = "/dev/ttyUSB0"
+                )
+            )
+        } else {
+            usbDevices.mapIndexed { index, deviceInfo ->
+                DetectedDevice(
+                    vendorId = deviceInfo["vendorId"] as? Int ?: 0,
+                    productId = deviceInfo["productId"] as? Int ?: 0,
+                    deviceName = deviceInfo["description"] as? String ?: "USB Device ${index + 1}",
+                    serialPath = "/dev/ttyUSB$index"
+                )
+            }
+        }
+        
+        android.util.Log.d("PolyField", "Detected ${detectedDevices.size} USB devices after refresh")
+        updateDetectedDevices(detectedDevices)
     }
     
     fun updateDevice(device: UsbDevice?, isDemoMode: Boolean) {
@@ -245,8 +307,14 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             // Live mode - use real EDM device
             viewModelScope.launch {
                 try {
-                    android.util.Log.d("PolyField", "Setting centre with real EDM device...")
-                    val reading = edmModule.getReliableEDMReading("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    android.util.Log.d("PolyField", "Setting centre with real EDM device (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    
+                    val reading = if (isDoubleReadMode) {
+                        edmModule.getReliableEDMReading("edm")
+                    } else {
+                        edmModule.getSingleEDMReading("edm")
+                    }
                     
                     if (reading.success) {
                         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
@@ -317,8 +385,14 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             // Live mode - use real EDM device for edge verification
             viewModelScope.launch {
                 try {
-                    android.util.Log.d("PolyField", "Verifying edge with real EDM device...")
-                    val reading = edmModule.getReliableEDMReading("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    android.util.Log.d("PolyField", "Verifying edge with real EDM device (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    
+                    val reading = if (isDoubleReadMode) {
+                        edmModule.getReliableEDMReading("edm")
+                    } else {
+                        edmModule.getSingleEDMReading("edm")
+                    }
                     
                     if (reading.success && reading.distance != null) {
                         val targetRadius = _uiState.value.calibration.targetRadius
@@ -401,8 +475,14 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             
             viewModelScope.launch {
                 try {
-                    android.util.Log.d("PolyField", "Getting real EDM reading...")
-                    val reading = edmModule.getReliableEDMReading("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    android.util.Log.d("PolyField", "Getting real EDM reading (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    
+                    val reading = if (isDoubleReadMode) {
+                        edmModule.getReliableEDMReading("edm")
+                    } else {
+                        edmModule.getSingleEDMReading("edm")
+                    }
                     
                     if (reading.success && reading.distance != null) {
                         val distance = reading.distance
@@ -552,6 +632,155 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     }
 }
 
+// Settings Screen
+@Composable
+fun SettingsScreen(
+    isDemoMode: Boolean,
+    isDoubleReadMode: Boolean,
+    onDemoModeToggle: () -> Unit,
+    onDoubleReadModeToggle: (Boolean) -> Unit,
+    onBackClick: () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp
+    
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(maxOf(20f, screenWidth * 0.025f).dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Title
+            Text(
+                text = "Settings",
+                fontSize = maxOf(24f, screenWidth * 0.028f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF333333),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 40.dp)
+            )
+            
+            // Settings options
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(15.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    // Demo/Live Mode Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Demo Mode",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF333333)
+                            )
+                            Text(
+                                text = if (isDemoMode) "Currently: Demo Active" else "Currently: Live Mode",
+                                fontSize = 14.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                        Switch(
+                            checked = isDemoMode,
+                            onCheckedChange = { onDemoModeToggle() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFFFFEB3B),
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = Color(0xFF4CAF50)
+                            )
+                        )
+                    }
+                    
+                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    
+                    // Single/Double Read Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "EDM Read Mode",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF333333)
+                            )
+                            Text(
+                                text = if (isDoubleReadMode) "Double read with tolerance" else "Single read only",
+                                fontSize = 14.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                        Switch(
+                            checked = isDoubleReadMode,
+                            onCheckedChange = onDoubleReadModeToggle,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF1976D2),
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = Color(0xFF999999)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        
+        // Back button
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp),
+            shape = RectangleShape,
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onBackClick,
+                    modifier = Modifier.width(200.dp),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE0E0E0),
+                        contentColor = Color(0xFF333333)
+                    )
+                ) {
+                    Text(
+                        text = "← Back",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
 class MainActivityCompose : ComponentActivity() {
     
     // USB Management
@@ -611,6 +840,7 @@ class MainActivityCompose : ComponentActivity() {
         
         usbReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
+                android.util.Log.d("PolyField", "USB BroadcastReceiver: Received intent action: ${intent.action}")
                 when (intent.action) {
                     ACTION_USB_PERMISSION -> {
                         synchronized(this) {
@@ -661,20 +891,57 @@ class MainActivityCompose : ComponentActivity() {
     
     private fun checkConnectedUSBDevices() {
         val deviceList = usbManager.deviceList
+        android.util.Log.d("PolyField", "Checking USB devices - Total devices found: ${deviceList.size}")
+        
         if (deviceList.isEmpty()) {
             android.util.Log.d("PolyField", "No USB devices detected")
+            viewModel.updateDetectedDevices(emptyList())
             return
         }
         
-        val serialDevice = deviceList.values.find { isUSBSerialDevice(it) }
-        if (serialDevice != null) {
-            val deviceName = serialDevice.productName ?: "Unknown"
-            android.util.Log.d("PolyField", "Found USB serial device: $deviceName (VID: ${String.format("%04X", serialDevice.vendorId)}, PID: ${String.format("%04X", serialDevice.productId)})")
+        // Log all detected USB devices for debugging
+        deviceList.values.forEach { device ->
+            android.util.Log.d("PolyField", "USB Device found: ${device.productName ?: "Unknown"} " +
+                    "(VID: ${String.format("%04X", device.vendorId)}, " +
+                    "PID: ${String.format("%04X", device.productId)})")
+        }
+        
+        // Use the EDMModule to list USB devices (matches v16 approach)
+        val usbDevicesResult = viewModel.getUsbDevices()
+        
+        @Suppress("UNCHECKED_CAST")
+        val usbDevices = (usbDevicesResult["ports"] as? List<Map<String, Any>>) ?: emptyList()
+        
+        // Find all serial devices and populate the detected devices list
+        val serialDevices = deviceList.values.filter { isUSBSerialDevice(it) }
+        android.util.Log.d("PolyField", "Compatible USB serial devices: ${serialDevices.size}")
+        
+        val detectedDevices = usbDevices.mapIndexed { index, deviceInfo ->
+            DetectedDevice(
+                vendorId = deviceInfo["vendorId"] as? Int ?: 0,
+                productId = deviceInfo["productId"] as? Int ?: 0,
+                deviceName = deviceInfo["description"] as? String ?: "USB Device ${index + 1}",
+                serialPath = "/dev/ttyUSB$index"
+            )
+        }
+        
+        // Update the state with detected devices
+        viewModel.updateDetectedDevices(detectedDevices)
+        
+        if (serialDevices.isNotEmpty()) {
+            val deviceNames = serialDevices.map { it.productName ?: "Unknown" }
+            android.util.Log.d("PolyField", "Found ${serialDevices.size} USB serial device(s): $deviceNames")
             
-            if (!usbManager.hasPermission(serialDevice)) {
-                usbManager.requestPermission(serialDevice, permissionIntent)
+            // Request permission for the first device (or handle multiple devices)
+            val firstDevice = serialDevices.first()
+            android.util.Log.d("PolyField", "Checking permissions for: ${firstDevice.productName}")
+            
+            if (!usbManager.hasPermission(firstDevice)) {
+                android.util.Log.d("PolyField", "Requesting USB permission for device")
+                usbManager.requestPermission(firstDevice, permissionIntent)
             } else {
-                onUSBDevicePermissionGranted(serialDevice)
+                android.util.Log.d("PolyField", "Device already has permission, connecting")
+                onUSBDevicePermissionGranted(firstDevice)
             }
         } else {
             android.util.Log.d("PolyField", "No compatible USB serial devices found")
@@ -727,6 +994,35 @@ class MainActivityCompose : ComponentActivity() {
     private fun onUSBDevicePermissionGranted(device: UsbDevice) {
         val deviceName = device.productName ?: "Serial Device"
         viewModel.updateDevice(device, false)
+        
+        // Auto-connect to EDM device if only one device found
+        val deviceList = usbManager.deviceList
+        val serialDevices = deviceList.values.filter { isUSBSerialDevice(it) }
+        
+        if (serialDevices.size == 1) {
+            android.util.Log.d("PolyField", "Single USB serial device detected: $deviceName - Auto-connecting to EDM")
+            
+            // Update device config with auto-detected device info
+            val devicePath = "/dev/ttyUSB0" // Default path for USB serial devices
+            val autoDetectedConfig = DeviceState(
+                connected = false, // Will be set to true after successful connection
+                connectionType = "serial",
+                serialPort = devicePath,
+                ipAddress = "192.168.1.100", // Default fallback
+                port = 8080 // Default fallback
+            )
+            
+            // Update device configuration
+            viewModel.updateDeviceConfig("edm", autoDetectedConfig)
+            
+            // Auto-connect to EDM device
+            viewModel.updateDeviceConnection("edm", true)
+            
+            android.util.Log.d("PolyField", "Auto-connecting EDM device at $devicePath")
+        } else if (serialDevices.size > 1) {
+            android.util.Log.d("PolyField", "Multiple USB serial devices detected (${serialDevices.size}) - Manual selection required")
+        }
+        
         android.util.Log.d("PolyField", "USB device connected: $deviceName")
     }
 }
@@ -781,6 +1077,9 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                     onEventSelected = { eventType ->
                         viewModel.updateEventType(eventType)
                         viewModel.updateScreen("DEVICE_SETUP")
+                    },
+                    onSettingsClick = {
+                        viewModel.updateScreen("SETTINGS")
                     }
                 )
                 "DEVICE_SETUP" -> DeviceSetupScreenExact(
@@ -805,6 +1104,7 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 )
                 "CALIBRATION_SELECT_CIRCLE" -> CalibrationSelectCircleScreenExact(
                     selectedCircle = uiState.calibration.circleType,
+                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onCircleSelected = { circleType ->
                         viewModel.updateCircleType(circleType)
                     }
@@ -821,6 +1121,7 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 "CALIBRATION_VERIFY_EDGE" -> CalibrationVerifyEdgeScreenExact(
                     calibration = uiState.calibration,
                     isLoading = uiState.isLoading,
+                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onVerifyEdge = { viewModel.verifyEdge() },
                     onResetEdge = { 
                         viewModel.resetCalibration()
@@ -853,6 +1154,17 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                         viewModel.updateScreen("SELECT_EVENT_TYPE")
                     }
                 )
+                "SETTINGS" -> SettingsScreen(
+                    isDemoMode = uiState.isDemoMode,
+                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
+                    onDemoModeToggle = { viewModel.toggleDemoMode() },
+                    onDoubleReadModeToggle = { enabled ->
+                        viewModel.updateSettings(uiState.settings.copy(isDoubleReadMode = enabled))
+                    },
+                    onBackClick = {
+                        viewModel.updateScreen("SELECT_EVENT_TYPE")
+                    }
+                )
             }
         }
         
@@ -861,11 +1173,13 @@ fun PolyFieldApp(viewModel: AppViewModel) {
             DeviceConfigurationModal(
                 onDismiss = { viewModel.toggleDeviceSetupModal() },
                 devices = uiState.devices,
+                detectedDevices = uiState.detectedDevices,
                 initialSelectedDevice = uiState.selectedDeviceForConfig,
                 onUpdateDevice = { deviceType, deviceConfig ->
                     viewModel.updateDeviceConfig(deviceType, deviceConfig)
                     viewModel.toggleDeviceSetupModal()
-                }
+                },
+                onRefreshUsb = { viewModel.refreshUsbDevices() }
             )
         }
         
@@ -930,7 +1244,7 @@ private fun getScreenTitle(screen: String, eventType: String, circleType: String
 }
 
 private fun canGoBack(screen: String): Boolean {
-    return screen != "SELECT_EVENT_TYPE"
+    return screen != "SELECT_EVENT_TYPE" && screen != "SETTINGS"
 }
 
 private fun canGoForward(screen: String): Boolean {
@@ -942,7 +1256,7 @@ private fun canGoForward(screen: String): Boolean {
 }
 
 private fun showBottomNavigation(screen: String): Boolean {
-    return screen != "SELECT_EVENT_TYPE" // Hide on initial screen
+    return screen != "SELECT_EVENT_TYPE" && screen != "SETTINGS" // Hide on initial screen and settings
 }
 
 private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {

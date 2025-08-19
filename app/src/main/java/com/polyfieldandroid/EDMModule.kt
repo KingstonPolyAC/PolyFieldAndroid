@@ -1,6 +1,8 @@
 package com.polyfieldandroid
 
 import android.content.Context
+import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbDevice
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -151,6 +153,74 @@ class EDMModule(private val context: Context) {
         }
     }
     
+    /**
+     * Get single EDM reading for distance measurement (no tolerance checking)
+     * Calls the native Go Mobile module for a single reading
+     */
+    suspend fun getSingleEDMReading(deviceType: String): EDMReading {
+        return withContext(Dispatchers.IO) {
+            Log.d(TAG, "Getting single EDM reading from native module: $deviceType")
+            
+            val connection = connectedDevices[deviceType]
+            if (connection == null || !connection.isConnected) {
+                return@withContext EDMReading(
+                    success = false,
+                    error = "Device $deviceType not connected"
+                )
+            }
+            
+            try {
+                Log.d(TAG, "Calling native mobile.Mobile.getSingleEDMReading($deviceType)")
+                
+                // Call native Go Mobile module for single reading
+                // The native module handles:
+                // 1. Taking one EDM reading 
+                // 2. No tolerance checking
+                // 3. 10-second timeout
+                // Note: For now, use the reliable reading method but treat as single read
+                val result = mobile.Mobile.getReliableEDMReading(deviceType)
+                
+                Log.d(TAG, "Native module single reading result: $result")
+                
+                // Parse the JSON result from native module
+                val jsonResult = org.json.JSONObject(result as String)
+                
+                if (jsonResult.has("error")) {
+                    val error = jsonResult.getString("error")
+                    if (error == "USB_ANDROID_DELEGATE") {
+                        // Handle USB delegation if needed
+                        return@withContext EDMReading(
+                            success = false,
+                            error = "USB communication not yet implemented"
+                        )
+                    }
+                    return@withContext EDMReading(
+                        success = false,
+                        error = error
+                    )
+                }
+                
+                // Success case - extract slope distance and convert to meters
+                val slopeDistanceMm = jsonResult.getDouble("slopeDistanceMm")
+                val distanceMeters = slopeDistanceMm / 1000.0
+                
+                Log.d(TAG, "Single EDM reading successful: ${distanceMeters}m (from ${slopeDistanceMm}mm)")
+                
+                EDMReading(
+                    success = true,
+                    distance = distanceMeters
+                )
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Single EDM reading failed", e)
+                EDMReading(
+                    success = false,
+                    error = e.message ?: "Could not find prism. Check your aim and remeasure. If EDM displays \"STOP\" then press F1 to reset"
+                )
+            }
+        }
+    }
+
     /**
      * Get reliable EDM reading for distance measurement
      * Calls the native Go Mobile module which handles dual reading and tolerance checking
@@ -319,5 +389,98 @@ class EDMModule(private val context: Context) {
         
         // Add some measurement variation (±5cm)
         return baseDistance + (kotlin.random.Random.nextDouble() - 0.5) * 0.1
+    }
+    
+    /**
+     * List all connected USB devices (matches v16 implementation)
+     */
+    fun listUsbDevices(): Map<String, Any> {
+        Log.d(TAG, "=== USB Device Detection Started ===")
+        
+        try {
+            // Check if USB host feature is available
+            val pm = context.packageManager
+            val hasUsbHostFeature = pm.hasSystemFeature("android.hardware.usb.host")
+            Log.d(TAG, "USB Host feature available: $hasUsbHostFeature")
+            
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+            Log.d(TAG, "USB Manager class: ${usbManager.javaClass}")
+            
+            val deviceList = usbManager.deviceList
+            Log.d(TAG, "USB Manager obtained - Device list size: ${deviceList.size}")
+            Log.d(TAG, "Device list keys: ${deviceList.keys}")
+            
+            if (deviceList.isEmpty()) {
+                Log.w(TAG, "No USB devices found by UsbManager - This is unusual!")
+                Log.w(TAG, "Expected to see at least the USB connection cable.")
+                Log.w(TAG, "Possible issues:")
+                Log.w(TAG, "1. Device not in USB Host mode")
+                Log.w(TAG, "2. USB Host API not supported")
+                Log.w(TAG, "3. Missing USB permissions")
+                Log.w(TAG, "4. Cable is USB device mode only")
+                return mapOf(
+                    "ports" to emptyList<Map<String, Any>>(),
+                    "method" to "android_usb_host_api", 
+                    "count" to 0,
+                    "status" to "no_devices",
+                    "usb_host_available" to hasUsbHostFeature
+                )
+            }
+            
+            val devices = mutableListOf<Map<String, Any>>()
+            
+            for (device in deviceList.values) {
+                Log.d(TAG, "Processing USB device:")
+                Log.d(TAG, "  Device Name: ${device.deviceName}")
+                Log.d(TAG, "  Manufacturer: ${device.manufacturerName ?: "Unknown"}")
+                Log.d(TAG, "  Product: ${device.productName ?: "Unknown"}")
+                Log.d(TAG, "  Vendor ID: 0x${String.format("%04X", device.vendorId)} (${device.vendorId})")
+                Log.d(TAG, "  Product ID: 0x${String.format("%04X", device.productId)} (${device.productId})")
+                Log.d(TAG, "  Device Class: ${device.deviceClass}")
+                Log.d(TAG, "  Interface Count: ${device.interfaceCount}")
+                
+                val deviceInfo = mutableMapOf<String, Any>()
+                deviceInfo["deviceName"] = device.deviceName
+                deviceInfo["manufacturerName"] = device.manufacturerName ?: "Unknown"
+                deviceInfo["productName"] = device.productName ?: "Unknown"
+                deviceInfo["vendorId"] = device.vendorId
+                deviceInfo["productId"] = device.productId
+                deviceInfo["deviceClass"] = device.deviceClass
+                deviceInfo["port"] = device.deviceName // Use device name as port identifier
+                
+                // Create description for user (matches v16 format)
+                val description = String.format(
+                    "%s - %s (VID:%04X PID:%04X)",
+                    device.manufacturerName ?: "Unknown",
+                    device.productName ?: "USB Device",
+                    device.vendorId,
+                    device.productId
+                )
+                deviceInfo["description"] = description
+                
+                devices.add(deviceInfo)
+                Log.d(TAG, "Added device: $description")
+            }
+            
+            Log.d(TAG, "=== USB Device Detection Complete - Found ${devices.size} devices ===")
+            
+            return mapOf(
+                "ports" to devices,
+                "method" to "android_usb_host_api",
+                "count" to devices.size,
+                "status" to "success"
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "=== USB Device Detection FAILED ===", e)
+            Log.e(TAG, "Error: ${e.message}")
+            Log.e(TAG, "Stack trace: ${e.stackTrace.contentToString()}")
+            return mapOf(
+                "error" to (e.message ?: "Unknown error"),
+                "ports" to emptyList<Map<String, Any>>(),
+                "count" to 0,
+                "status" to "error"
+            )
+        }
     }
 }

@@ -25,9 +25,9 @@ import androidx.compose.ui.unit.sp
 // UKA radius helper - EXACT values from original
 fun getDemoUKARadius(circleType: String): Double {
     return when (circleType) {
-        "SHOT" -> 1.065      // 2.13m diameter
+        "SHOT" -> 1.0675     // 2.135m diameter
         "DISCUS" -> 1.25     // 2.5m diameter  
-        "HAMMER" -> 1.065    // 2.13m diameter
+        "HAMMER" -> 1.0675   // 2.135m diameter
         "JAVELIN_ARC" -> 8.0 // 16m diameter with 10mm tolerance
         else -> 1.0
     }
@@ -119,52 +119,93 @@ fun PolyFieldHeaderExact(
 // SELECT_EVENT_TYPE Screen - Exact match
 @Composable
 fun SelectEventTypeScreenExact(
-    onEventSelected: (String) -> Unit
+    onEventSelected: (String) -> Unit,
+    onSettingsClick: () -> Unit = {}
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
     val screenHeight = configuration.screenHeightDp
     
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(maxOf(20f, screenWidth * 0.025f).dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier.fillMaxSize()
     ) {
-        // Title
-        Text(
-            text = "Select Event Type",
-            fontSize = maxOf(24f, screenWidth * 0.028f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF333333),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = maxOf(20f, screenHeight * 0.025f).dp)
-        )
-        
-        // Horizontal card container matching original - ONLY 2 cards
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .weight(1f)
-                .padding(vertical = 20.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(maxOf(20f, screenWidth * 0.025f).dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            EventTypeCardExact(
-                title = "Throws",
-                description = "Shot, Discus, Hammer, Javelin",
-                onClick = { onEventSelected("Throws") },
-                screenWidth = screenWidth,
-                screenHeight = screenHeight
+            // Title
+            Text(
+                text = "Select Event Type",
+                fontSize = maxOf(24f, screenWidth * 0.028f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF333333),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = maxOf(20f, screenHeight * 0.025f).dp)
             )
             
-            EventTypeCardExact(
-                title = "Horizontal Jumps", 
-                description = "Long Jump, Triple Jump",
-                onClick = { onEventSelected("Horizontal Jumps") },
-                screenWidth = screenWidth,
-                screenHeight = screenHeight
-            )
+            // Horizontal card container matching original - ONLY 2 cards
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 20.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                EventTypeCardExact(
+                    title = "Throws",
+                    description = "Shot, Discus, Hammer, Javelin",
+                    onClick = { onEventSelected("Throws") },
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
+                )
+                
+                EventTypeCardExact(
+                    title = "Horizontal Jumps", 
+                    description = "Long Jump, Triple Jump",
+                    onClick = { onEventSelected("Horizontal Jumps") },
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
+                )
+            }
+        }
+        
+        // Bottom navigation with settings button
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp),
+            shape = RectangleShape,
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onSettingsClick,
+                    modifier = Modifier.width(200.dp),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1976D2)
+                    )
+                ) {
+                    Text(
+                        text = "⚙️ Settings",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
         }
     }
 }
@@ -406,13 +447,23 @@ fun DeviceStatusCard(
             if (!isDemoMode && isEnabled) {
                 Text(
                     text = if (connectionType == "serial") {
-                        "Serial: $serialPort"
+                        if (connected) "Connected: $serialPort" else "Serial: $serialPort"
                     } else {
-                        "Network: $ipAddress:$port"
+                        if (connected) "Connected: $ipAddress:$port" else "Network: $ipAddress:$port"  
                     },
                     fontSize = 14.sp,
-                    color = Color(0xFF666666)
+                    color = if (connected) Color(0xFF4CAF50) else Color(0xFF666666)
                 )
+                
+                // Show auto-detected info for connected devices
+                if (connected && connectionType == "serial") {
+                    Text(
+                        text = "Auto-detected USB device",
+                        fontSize = 12.sp,
+                        color = Color(0xFF1976D2),
+                        modifier = androidx.compose.ui.Modifier.padding(top = 4.dp)
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(15.dp))

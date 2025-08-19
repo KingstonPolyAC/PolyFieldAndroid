@@ -37,6 +37,7 @@ fun formatTimestamp(timestamp: String?): String {
 @Composable
 fun CalibrationSelectCircleScreenExact(
     selectedCircle: String,
+    isDoubleReadMode: Boolean,
     onCircleSelected: (String) -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -73,9 +74,9 @@ fun CalibrationSelectCircleScreenExact(
         
         // Circle tiles in grid layout - UKA/WA specifications
         val circles = listOf(
-            Triple("SHOT", "1.065m", "±5mm"),
+            Triple("SHOT", "1.0675m", "±5mm"),
             Triple("DISCUS", "1.25m", "±5mm"),
-            Triple("HAMMER", "1.065m", "±5mm"),
+            Triple("HAMMER", "1.0675m", "±5mm"),
             Triple("JAVELIN_ARC", "8.0m", "±10mm")
         )
         
@@ -87,8 +88,8 @@ fun CalibrationSelectCircleScreenExact(
             ) {
                 CircleTileCompact(
                     title = "SHOT",
-                    radius = "1.065m",
-                    tolerance = "±5mm",
+                    radius = "1.0675m",
+                    tolerance = "±5mm UKA/WA",
                     isSelected = selectedCircle == "SHOT",
                     onClick = { onCircleSelected("SHOT") },
                     modifier = Modifier.weight(1f)
@@ -96,7 +97,7 @@ fun CalibrationSelectCircleScreenExact(
                 CircleTileCompact(
                     title = "DISCUS",
                     radius = "1.25m",
-                    tolerance = "±5mm",
+                    tolerance = "±5mm UKA/WA",
                     isSelected = selectedCircle == "DISCUS",
                     onClick = { onCircleSelected("DISCUS") },
                     modifier = Modifier.weight(1f)
@@ -111,8 +112,8 @@ fun CalibrationSelectCircleScreenExact(
             ) {
                 CircleTileCompact(
                     title = "HAMMER",
-                    radius = "1.065m",
-                    tolerance = "±5mm",
+                    radius = "1.0675m",
+                    tolerance = "±5mm UKA/WA",
                     isSelected = selectedCircle == "HAMMER",
                     onClick = { onCircleSelected("HAMMER") },
                     modifier = Modifier.weight(1f)
@@ -120,7 +121,7 @@ fun CalibrationSelectCircleScreenExact(
                 CircleTileCompact(
                     title = "JAVELIN ARC",
                     radius = "8.0m",
-                    tolerance = "±10mm",
+                    tolerance = "±10mm UKA/WA",
                     isSelected = selectedCircle == "JAVELIN_ARC",
                     onClick = { onCircleSelected("JAVELIN_ARC") },
                     modifier = Modifier.weight(1f)
@@ -334,11 +335,12 @@ fun CalibrationSetCentreScreenExact(
     }
 }
 
-// CALIBRATION_VERIFY_EDGE Screen - With tolerance display
+// CALIBRATION_VERIFY_EDGE Screen - With tolerance display (double read) or direct measurement (single read)
 @Composable
 fun CalibrationVerifyEdgeScreenExact(
     calibration: CalibrationState,
     isLoading: Boolean,
+    isDoubleReadMode: Boolean,
     onVerifyEdge: () -> Unit,
     onResetEdge: () -> Unit
 ) {
@@ -385,12 +387,22 @@ fun CalibrationVerifyEdgeScreenExact(
                 )
                 
                 Text(
-                    text = "Tolerance: ${if (calibration.circleType == "JAVELIN_ARC") "±10mm" else "±5mm"}",
+                    text = "UKA/WA Tolerance: ${if (calibration.circleType == "JAVELIN_ARC") "±10mm" else "±5mm"}",
                     fontSize = 16.sp,
                     color = Color(0xFF666666),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
                 )
+                
+                if (!isDoubleReadMode) {
+                    Text(
+                        text = "Single read mode - No 3mm comparison check",
+                        fontSize = 14.sp,
+                        color = Color(0xFF1976D2),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    )
+                }
             }
         }
         
@@ -426,10 +438,19 @@ fun CalibrationVerifyEdgeScreenExact(
                         
                         // Results details
                         Text(
-                            text = "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
-                                  "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
-                                  "Measurements: ${result.measurements.size}\n" +
-                                  "Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}",
+                            text = if (isDoubleReadMode) {
+                                "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
+                                "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
+                                "Measurements: ${result.measurements.size} (averaged)\n" +
+                                "3mm comparison: PASS\n" +
+                                "UKA/WA Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}"
+                            } else {
+                                "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
+                                "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
+                                "Measurements: ${result.measurements.size} (single read)\n" +
+                                "3mm comparison: SKIPPED\n" +
+                                "UKA/WA Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}"
+                            },
                             fontSize = 14.sp,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center,
@@ -479,10 +500,10 @@ fun CalibrationVerifyEdgeScreenExact(
                 // Results are shown, display appropriate action button
                 calibration.edgeResult?.let { result ->
                     if (result.toleranceCheck) {
-                        // Passed - use bottom navigation to continue
+                        // UKA/WA tolerance passed - use bottom navigation to continue
                         Spacer(modifier = Modifier.height(16.dp))
                     } else {
-                        // Failed - show Remeasure button
+                        // UKA/WA tolerance failed - show Remeasure button
                         Button(
                             onClick = onResetEdge,
                             modifier = Modifier

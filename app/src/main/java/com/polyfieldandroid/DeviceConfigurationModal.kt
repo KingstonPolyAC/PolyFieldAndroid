@@ -1,6 +1,9 @@
 package com.polyfieldandroid
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -14,8 +17,10 @@ import androidx.compose.ui.unit.sp
 fun DeviceConfigurationModal(
     onDismiss: () -> Unit,
     devices: DeviceConfig,
+    detectedDevices: List<DetectedDevice>,
     initialSelectedDevice: String? = null,
-    onUpdateDevice: (String, DeviceState) -> Unit
+    onUpdateDevice: (String, DeviceState) -> Unit,
+    onRefreshUsb: () -> Unit = {}
 ) {
     var selectedDevice by remember { mutableStateOf(initialSelectedDevice ?: "edm") }
     
@@ -31,6 +36,10 @@ fun DeviceConfigurationModal(
     var serialPort by remember(selectedDevice) { mutableStateOf(currentDevice.serialPort) }
     var ipAddress by remember(selectedDevice) { mutableStateOf(currentDevice.ipAddress) }
     var port by remember(selectedDevice) { mutableStateOf(currentDevice.port) }
+    
+    // Dropdown state for detected devices
+    var expanded by remember { mutableStateOf(false) }
+    var selectedDetectedDevice by remember { mutableStateOf<DetectedDevice?>(null) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -135,12 +144,116 @@ fun DeviceConfigurationModal(
                 
                 // Connection details
                 if (connectionType == "serial") {
-                    OutlinedTextField(
-                        value = serialPort,
-                        onValueChange = { serialPort = it },
-                        label = { Text("Serial Port") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (detectedDevices.isNotEmpty()) {
+                        // Dropdown for detected devices with refresh button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Detected Devices:",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            OutlinedButton(
+                                onClick = { onRefreshUsb() },
+                                modifier = Modifier.size(width = 80.dp, height = 32.dp)
+                            ) {
+                                Text(
+                                    text = "Refresh",
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                        
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = !expanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = selectedDetectedDevice?.deviceName ?: "Select a device...",
+                                onValueChange = { },
+                                readOnly = true,
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                                },
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth()
+                            )
+                            
+                            ExposedDropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                detectedDevices.forEach { device ->
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Column {
+                                                Text(
+                                                    text = device.deviceName,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = "VID: ${String.format("%04X", device.vendorId)}, PID: ${String.format("%04X", device.productId)}",
+                                                    fontSize = 12.sp,
+                                                    color = androidx.compose.ui.graphics.Color.Gray
+                                                )
+                                                Text(
+                                                    text = "Path: ${device.serialPath}",
+                                                    fontSize = 12.sp,
+                                                    color = androidx.compose.ui.graphics.Color.Gray
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            selectedDetectedDevice = device
+                                            serialPort = device.serialPath
+                                            expanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Fallback to text field if no devices detected with refresh button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "No USB Devices:",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            OutlinedButton(
+                                onClick = { onRefreshUsb() },
+                                modifier = Modifier.size(width = 80.dp, height = 32.dp)
+                            ) {
+                                Text(
+                                    text = "Refresh",
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                        
+                        OutlinedTextField(
+                            value = serialPort,
+                            onValueChange = { serialPort = it },
+                            label = { Text("Serial Port") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        Text(
+                            text = "No USB devices detected. Enter path manually or try Refresh.",
+                            fontSize = 12.sp,
+                            color = androidx.compose.ui.graphics.Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 } else {
                     OutlinedTextField(
                         value = ipAddress,
