@@ -1,5 +1,6 @@
 package com.polyfieldandroid
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -246,90 +247,325 @@ fun CircleTileCompact(
     }
 }
 
-// CALIBRATION_SET_CENTRE Screen - With real status display
+// CALIBRATION_SET_CENTRE Screen - With real status display and historical calibration selection
 @Composable
 fun CalibrationSetCentreScreenExact(
     calibration: CalibrationState,
     isLoading: Boolean,
+    availableCalibrations: List<CalibrationRecord>,
     onSetCentre: () -> Unit,
-    onResetCentre: () -> Unit
+    onResetCentre: () -> Unit,
+    onLoadHistoricalCalibration: (CalibrationRecord) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Title
-        Text(
-            text = "EDM Calibration - Set Centre",
-            fontSize = maxOf(24f, screenWidth * 0.028f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF333333),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 30.dp)
-        )
-        
-        // Circle type display
-        Text(
-            text = "${calibration.circleType.replace("_", " ")} Circle",
-            fontSize = maxOf(20f, screenWidth * 0.024f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1976D2),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 10.dp)
-        )
-        
-        // Radius display
-        Text(
-            text = "Radius: ${String.format("%.3f", calibration.targetRadius)}m",
-            fontSize = maxOf(18f, screenWidth * 0.022f).sp,
-            color = Color(0xFF666666),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 40.dp)
-        )
-        
-        // Set Centre button
-        Button(
-            onClick = onSetCentre,
-            enabled = !isLoading,
+    if (isLandscape && availableCalibrations.isNotEmpty() && !calibration.centreSet) {
+        // Landscape layout with previous calibrations
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(80.dp),
-            shape = RoundedCornerShape(15.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (calibration.centreSet) Color(0xFF4CAF50) else Color(0xFF1976D2)
-            )
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                text = when {
-                    isLoading -> "Setting Centre..."
-                    calibration.centreSet -> "✓ Centre Set - ${formatTimestamp(calibration.centreTimestamp)}"
-                    else -> "Set Centre"
-                },
-                fontSize = if (calibration.centreSet) 16.sp else 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                textAlign = TextAlign.Center
-            )
+            // Left column - Set Centre functionality
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Title and circle info
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Set Centre",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF333333),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 20.dp)
+                    )
+                    
+                    Text(
+                        text = "${calibration.circleType.replace("_", " ")} Circle",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1976D2),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "Radius: ${String.format("%.3f", calibration.targetRadius)}m",
+                        fontSize = 18.sp,
+                        color = Color(0xFF666666),
+                        textAlign = TextAlign.Center
+                    )
+                }
+                
+                // Set Centre button
+                Column {
+                    Button(
+                        onClick = onSetCentre,
+                        enabled = !isLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp),
+                        shape = RoundedCornerShape(15.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (calibration.centreSet) Color(0xFF4CAF50) else Color(0xFF1976D2)
+                        )
+                    ) {
+                        Text(
+                            text = when {
+                                isLoading -> "Setting Centre..."
+                                calibration.centreSet && calibration.selectedHistoricalCalibration != null -> 
+                                    "✓ Loaded from ${calibration.selectedHistoricalCalibration.getDisplayName()}"
+                                calibration.centreSet -> "✓ Centre Set"
+                                else -> "Set Centre"
+                            },
+                            fontSize = if (calibration.centreSet) 14.sp else 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    
+                    // Reset button
+                    if (calibration.centreSet) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = onResetCentre,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Reset Centre",
+                                color = Color(0xFFF44336)
+                            )
+                        }
+                    }
+                }
+            }
+            
+            // Right column - Previous calibrations
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxSize(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F8FF)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = "Load Previous Calibration",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1976D2),
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        
+                        availableCalibrations.forEach { calibrationRecord ->
+                            OutlinedButton(
+                                onClick = { onLoadHistoricalCalibration(calibrationRecord) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color(0xFF1976D2)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp, Color(0xFF1976D2)
+                                )
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = calibrationRecord.getDisplayName(),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (calibrationRecord.isComplete()) {
+                                        Text(
+                                            text = "✓ Complete (Centre + Edge + Sector Line)",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF4CAF50)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "Select a previous calibration to reuse centre, edge verification, and sector line measurements from today.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666),
+                            style = androidx.compose.ui.text.TextStyle(
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            )
+                        )
+                    }
+                }
+            }
         }
-        
-        // Reset button (only show if centre is set)
-        if (calibration.centreSet) {
+    } else {
+        // Portrait layout or no previous calibrations
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Title
+            Text(
+                text = "EDM Calibration - Set Centre",
+                fontSize = maxOf(24f, screenWidth * 0.028f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF333333),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 30.dp)
+            )
+            
+            // Circle type display
+            Text(
+                text = "${calibration.circleType.replace("_", " ")} Circle",
+                fontSize = maxOf(20f, screenWidth * 0.024f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+            
+            // Radius display
+            Text(
+                text = "Radius: ${String.format("%.3f", calibration.targetRadius)}m",
+                fontSize = maxOf(18f, screenWidth * 0.022f).sp,
+                color = Color(0xFF666666),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+            
+            // Historical calibration selection (only show if calibrations available and centre not set)
+            if (availableCalibrations.isNotEmpty() && !calibration.centreSet) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F8FF)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "Load Previous Calibration (Today)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1976D2),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                        
+                        availableCalibrations.forEach { calibrationRecord ->
+                            OutlinedButton(
+                                onClick = { onLoadHistoricalCalibration(calibrationRecord) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color(0xFF1976D2)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp, Color(0xFF1976D2)
+                                )
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = calibrationRecord.getDisplayName(),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (calibrationRecord.isComplete()) {
+                                        Text(
+                                            text = "✓ Complete (Centre + Edge + Sector Line)",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF4CAF50)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Text(
+                            text = "Select a previous calibration to reuse centre, edge verification, and sector line measurements.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666),
+                            style = androidx.compose.ui.text.TextStyle(
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            )
+                        )
+                    }
+                }
+            }
+            
             Spacer(modifier = Modifier.height(20.dp))
             
-            OutlinedButton(
-                onClick = onResetCentre,
-                modifier = Modifier.fillMaxWidth()
+            // Set Centre button
+            Button(
+                onClick = onSetCentre,
+                enabled = !isLoading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(80.dp),
+                shape = RoundedCornerShape(15.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (calibration.centreSet) Color(0xFF4CAF50) else Color(0xFF1976D2)
+                )
             ) {
                 Text(
-                    text = "Reset Centre",
-                    color = Color(0xFFF44336)
+                    text = when {
+                        isLoading -> "Setting Centre..."
+                        calibration.centreSet && calibration.selectedHistoricalCalibration != null -> 
+                            "✓ Loaded from ${calibration.selectedHistoricalCalibration.getDisplayName()}"
+                        calibration.centreSet -> "✓ Centre Set - ${formatTimestamp(calibration.centreTimestamp)}"
+                        else -> "Set Centre"
+                    },
+                    fontSize = if (calibration.centreSet) 14.sp else 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
                 )
+            }
+            
+            // Reset button (only show if centre is set)
+            if (calibration.centreSet) {
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                OutlinedButton(
+                    onClick = onResetCentre,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Reset Centre",
+                        color = Color(0xFFF44336)
+                    )
+                }
             }
         }
     }
@@ -423,12 +659,14 @@ fun CalibrationVerifyEdgeScreenExact(
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         // Pass/Fail indicator
                         Text(
-                            text = if (result.toleranceCheck) "✅ PASS" else "❌ FAIL",
+                            text = if (result.toleranceCheck) "PASS - In Tolerance" else "FAIL - OUT OF TOLERANCE",
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (result.toleranceCheck) Color(0xFF4CAF50) else Color(0xFFF44336),
@@ -436,21 +674,10 @@ fun CalibrationVerifyEdgeScreenExact(
                             modifier = Modifier.padding(bottom = 15.dp)
                         )
                         
-                        // Results details
+                        // Results details - simplified format
                         Text(
-                            text = if (isDoubleReadMode) {
-                                "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
-                                "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
-                                "Measurements: ${result.measurements.size} (averaged)\n" +
-                                "3mm comparison: PASS\n" +
-                                "UKA/WA Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}"
-                            } else {
-                                "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
-                                "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
-                                "Measurements: ${result.measurements.size} (single read)\n" +
-                                "3mm comparison: SKIPPED\n" +
-                                "UKA/WA Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}"
-                            },
+                            text = "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
+                                   "Deviation: ${if (result.deviation >= 0) "+" else ""}${String.format("%.1f", result.deviation * 1000)}mm",
                             fontSize = 14.sp,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center,
@@ -500,8 +727,24 @@ fun CalibrationVerifyEdgeScreenExact(
                 // Results are shown, display appropriate action button
                 calibration.edgeResult?.let { result ->
                     if (result.toleranceCheck) {
-                        // UKA/WA tolerance passed - use bottom navigation to continue
-                        Spacer(modifier = Modifier.height(16.dp))
+                        // UKA/WA tolerance passed - show optional remeasure button
+                        Button(
+                            onClick = onResetEdge,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp),
+                            shape = RoundedCornerShape(15.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF4CAF50)
+                            )
+                        ) {
+                            Text(
+                                text = "Remeasure",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     } else {
                         // UKA/WA tolerance failed - show Remeasure button
                         Button(
@@ -528,127 +771,3 @@ fun CalibrationVerifyEdgeScreenExact(
     }
 }
 
-// CALIBRATION_EDGE_RESULTS Screen - With pass/fail visualization
-@Composable
-fun CalibrationEdgeResultsScreenExact(
-    calibration: CalibrationState,
-    onContinue: () -> Unit,
-    onRemeasure: () -> Unit
-) {
-    val configuration = LocalConfiguration.current
-    val screenWidth = configuration.screenWidthDp
-    
-    val edgeResult = calibration.edgeResult
-    
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Title
-        Text(
-            text = "Edge Verification Results",
-            fontSize = maxOf(24f, screenWidth * 0.028f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF333333),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 40.dp)
-        )
-        
-        // Results card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 30.dp),
-            shape = RoundedCornerShape(15.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (edgeResult?.toleranceCheck == true) Color(0xFFE8F5E8) else Color(0xFFFFEBEE)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(30.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Pass/Fail indicator
-                Text(
-                    text = if (edgeResult?.toleranceCheck == true) "✅ PASS" else "❌ FAIL",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (edgeResult?.toleranceCheck == true) Color(0xFF4CAF50) else Color(0xFFF44336),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(bottom = 20.dp)
-                )
-                
-                // Results details
-                edgeResult?.let { result ->
-                    Text(
-                        text = "Circle type: ${calibration.circleType.replace("_", " ")}\n" +
-                              "Target radius: ${String.format("%.3f", calibration.targetRadius)}m\n" +
-                              "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
-                              "Deviation: ${String.format("%.1f", result.deviation * 1000)}mm\n" +
-                              "Measurements taken: ${result.measurements.size}\n" +
-                              "Status: ${if (result.toleranceCheck) "Within tolerance" else "Outside tolerance"}",
-                        fontSize = 16.sp,
-                        color = Color(0xFF333333),
-                        textAlign = TextAlign.Center,
-                        lineHeight = 24.sp
-                    )
-                }
-            }
-        }
-        
-        // Action buttons
-        if (edgeResult?.toleranceCheck == true) {
-            Button(
-                onClick = onContinue,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp),
-                shape = RoundedCornerShape(15.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4CAF50)
-                )
-            ) {
-                Text(
-                    text = "Continue to Measurement",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
-        } else {
-            Button(
-                onClick = onRemeasure,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp),
-                shape = RoundedCornerShape(15.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFF44336)
-                )
-            ) {
-                Text(
-                    text = "Remeasure Edge",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(15.dp))
-            
-            OutlinedButton(
-                onClick = onContinue,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Continue Anyway",
-                    color = Color(0xFF1976D2)
-                )
-            }
-        }
-    }
-}

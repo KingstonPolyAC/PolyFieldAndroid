@@ -28,7 +28,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.center
+import androidx.compose.ui.graphics.drawscope.DrawStyle
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -57,7 +68,35 @@ data class DeviceConfig(
     val scoreboard: DeviceState = DeviceState()
 )
 
-// Calibration State
+// Complete Calibration Record
+data class CalibrationRecord(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val circleType: String,
+    val targetRadius: Double,
+    val timestamp: Long = System.currentTimeMillis(),
+    val dateString: String = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+    val stationCoordinates: Pair<Double, Double>? = null,
+    val edgeResult: EdgeResult? = null,
+    val sectorLineDistance: Double? = null,
+    val sectorLineCoordinates: Pair<Double, Double>? = null
+) {
+    fun isFromToday(): Boolean {
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val calibrationDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
+        return today == calibrationDate
+    }
+    
+    fun getDisplayName(): String {
+        val timeFormat = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        return "${circleType.replace("_", " ")} - ${timeFormat.format(java.util.Date(timestamp))}"
+    }
+    
+    fun isComplete(): Boolean {
+        return stationCoordinates != null && edgeResult != null && sectorLineDistance != null
+    }
+}
+
+// Current Calibration State
 data class CalibrationState(
     val circleType: String = "SHOT",
     val targetRadius: Double = 1.0675,
@@ -65,7 +104,11 @@ data class CalibrationState(
     val centreTimestamp: String? = null,
     val stationCoordinates: Pair<Double, Double>? = null,
     val edgeVerified: Boolean = false,
-    val edgeResult: EdgeResult? = null
+    val edgeResult: EdgeResult? = null,
+    val sectorLineSet: Boolean = false,
+    val sectorLineDistance: Double? = null,
+    val sectorLineCoordinates: Pair<Double, Double>? = null,
+    val selectedHistoricalCalibration: CalibrationRecord? = null
 )
 
 data class EdgeResult(
@@ -75,19 +118,550 @@ data class EdgeResult(
     val deviation: Double = 0.0
 )
 
-// Throw Coordinate
+// Settings data class
+data class AppSettings(
+    val isDoubleReadMode: Boolean = true,
+    val selectedEDMDevice: EDMDeviceSpec = EDMDeviceRegistry.getDefaultDevice(),
+    val serverIpAddress: String = "192.168.0.90",
+    val serverPort: Int = 8080
+)
+
+// Heat Map Data Classes
 data class ThrowCoordinate(
     val x: Double,
     val y: Double,
     val distance: Double,
     val circleType: String,
-    val timestamp: String
+    val timestamp: String,
+    val id: String,
+    val athleteId: String? = null,
+    val round: String? = null
 )
 
-// Settings data class
-data class AppSettings(
-    val isDoubleReadMode: Boolean = true
+data class HeatMapData(
+    val coordinates: List<ThrowCoordinate>,
+    val bounds: HeatMapBounds,
+    val stats: ThrowStatistics,
+    val circleType: String,
+    val targetRadius: Double,
+    val optimalScale: Double,
+    val isAutoScaled: Boolean = true
 )
+
+data class HeatMapBounds(
+    val minX: Double,
+    val maxX: Double,
+    val minY: Double,
+    val maxY: Double
+)
+
+data class ThrowStatistics(
+    val totalThrows: Int,
+    val averageDistance: Double,
+    val maxDistance: Double,
+    val minDistance: Double
+)
+
+// Sector Line Calibration Screen
+@Composable
+fun CalibrationSectorLineScreen(
+    calibration: CalibrationState,
+    isLoading: Boolean,
+    onMeasureSectorLine: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Instructions Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F8FF))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Sector Line Check Mark",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1976D2),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    text = "Place the prism on the right-hand sector line and click measure.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color(0xFF333333),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+        }
+        
+        // Current Measurement Display
+        if (calibration.sectorLineSet && calibration.sectorLineDistance != null) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E8))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "✓ Sector Line Measured",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E7D32),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "${String.format("%.3f", calibration.sectorLineDistance)} m",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1976D2)
+                    )
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.weight(1f))
+        
+        // Action Buttons
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = onMeasureSectorLine,
+                enabled = !isLoading,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1976D2)
+                )
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = if (calibration.sectorLineSet) "Re-measure" else "Measure",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+        }
+    }
+}
+
+// Heat Map Screen
+@Composable
+fun HeatMapScreen(
+    calibration: CalibrationState,
+    throwCoordinates: List<ThrowCoordinate>,
+    onBackClick: () -> Unit
+) {
+    // Use actual throw coordinates and calibration data
+    val heatMapData = remember(throwCoordinates, calibration) {
+        val filteredCoords = throwCoordinates.filter { it.circleType == calibration.circleType }
+        
+        if (filteredCoords.isEmpty()) {
+            // Default scale based on event type
+            val defaultScale = when (calibration.circleType) {
+                "SHOT" -> 25.0
+                "DISCUS" -> 80.0
+                "HAMMER" -> 90.0
+                "JAVELIN_ARC" -> 100.0
+                else -> 50.0
+            }
+            HeatMapData(
+                coordinates = emptyList(),
+                bounds = HeatMapBounds(minX = -15.0, maxX = 15.0, minY = 0.0, maxY = defaultScale),
+                stats = ThrowStatistics(totalThrows = 0, averageDistance = 0.0, maxDistance = 0.0, minDistance = 0.0),
+                circleType = calibration.circleType,
+                targetRadius = calibration.targetRadius,
+                optimalScale = defaultScale
+            )
+        } else {
+            val distances = filteredCoords.map { it.distance }
+            val xCoords = filteredCoords.map { it.x }
+            val yCoords = filteredCoords.map { it.y }
+            val maxDistance = distances.maxOrNull() ?: 0.0
+            val minDistance = distances.minOrNull() ?: 0.0
+            
+            // Reactive scaling: ensure all throws are visible with appropriate margins
+            val maxX = kotlin.math.max(kotlin.math.abs(xCoords.maxOrNull() ?: 0.0), kotlin.math.abs(xCoords.minOrNull() ?: 0.0))
+            val maxY = yCoords.maxOrNull() ?: 0.0
+            
+            // Scale to fit all throws with 20% margin
+            val optimalScale = kotlin.math.max(maxY * 1.2, maxDistance * 1.2)
+            val lateralScale = maxX * 1.5 // Extra margin for lateral spread
+            
+            HeatMapData(
+                coordinates = filteredCoords,
+                bounds = HeatMapBounds(
+                    minX = -lateralScale,
+                    maxX = lateralScale,
+                    minY = kotlin.math.min(0.0, minDistance - 5.0),
+                    maxY = kotlin.math.max(optimalScale, maxY + 5.0)
+                ),
+                stats = ThrowStatistics(
+                    totalThrows = filteredCoords.size,
+                    averageDistance = distances.average(),
+                    maxDistance = maxDistance,
+                    minDistance = minDistance
+                ),
+                circleType = calibration.circleType,
+                targetRadius = calibration.targetRadius,
+                optimalScale = optimalScale
+            )
+        }
+    }
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            
+            // Heat Map Visualization - Full screen usage with labels overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(8.dp)
+            ) {
+                HeatMapVisualization(
+                    heatMapData = heatMapData,
+                    calibration = calibration,
+                    modifier = Modifier.fillMaxSize()
+                )
+                
+                // Add distance labels as overlay Text composables
+                HeatMapDistanceLabels(
+                    heatMapData = heatMapData,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Statistics
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    HeatMapStatItem(
+                        value = "${heatMapData.stats.totalThrows}",
+                        label = "Total Throws"
+                    )
+                    HeatMapStatItem(
+                        value = "${"%.2f".format(heatMapData.stats.averageDistance)}m",
+                        label = "Average"
+                    )
+                    HeatMapStatItem(
+                        value = "${"%.2f".format(heatMapData.stats.maxDistance)}m",
+                        label = "Best"
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        
+    }
+}
+
+@Composable
+fun HeatMapStatItem(value: String, label: String) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF1976D2)
+        )
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = Color(0xFF666666),
+            modifier = Modifier.padding(top = 2.dp)
+        )
+    }
+}
+
+@Composable
+fun HeatMapVisualization(
+    heatMapData: HeatMapData,
+    calibration: CalibrationState,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val canvasWidth = size.width
+        val canvasHeight = size.height
+        val centerX = canvasWidth / 2f
+        val centerY = canvasHeight * 0.9f // Center towards bottom for throw area
+        
+        // Calculate scale for visualization - use more of the screen
+        val maxDisplayDistance = heatMapData.optimalScale.toFloat()
+        val pixelsPerMeter = (canvasHeight * 0.85f) / maxDisplayDistance
+        
+        // Colors
+        val arcColor = androidx.compose.ui.graphics.Color(0xFFE0E0E0)
+        val sectorLineColor = androidx.compose.ui.graphics.Color(0xFFBBBBBB)
+        val centerColor = androidx.compose.ui.graphics.Color(0xFF1976D2)
+        val throwPointColor = androidx.compose.ui.graphics.Color(0xFFf44336)
+        val textColor = androidx.compose.ui.graphics.Color(0xFF666666)
+        
+        // Draw distance arc lines with event-specific intervals
+        val arcInterval = when (heatMapData.circleType) {
+            "SHOT" -> 2 // Every 2m for shot put
+            else -> 10 // Every 10m for discus, hammer, javelin
+        }
+        
+        // Determine range based on throws or default range
+        val distances = if (heatMapData.coordinates.isNotEmpty()) {
+            val throwDistances = heatMapData.coordinates.map { it.distance.toInt() }
+            val minDist = throwDistances.minOrNull() ?: arcInterval
+            val maxDist = throwDistances.maxOrNull() ?: maxDisplayDistance.toInt()
+            (minDist / arcInterval * arcInterval)..(maxDist / arcInterval * arcInterval + arcInterval) step arcInterval
+        } else {
+            arcInterval..maxDisplayDistance.toInt() step arcInterval
+        }
+        
+        for (distance in distances) {
+            val radius = distance * pixelsPerMeter
+            if (radius < canvasHeight * 0.8f) { // Only draw if within canvas bounds
+                // Draw the distance arc
+                drawCircle(
+                    color = arcColor,
+                    radius = radius,
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 2.dp.toPx())
+                )
+                
+                // Distance labels are now handled by overlay composables
+            }
+        }
+        
+        // Draw UKA/WA sector lines for throwing events
+        // Use calibrated sector line position if available, otherwise use standard angle
+        if (calibration.sectorLineSet && calibration.sectorLineCoordinates != null) {
+            // Use the calibrated sector line position to draw accurate sector lines
+            val (sectorX, sectorY) = calibration.sectorLineCoordinates!!
+            
+            // Calculate extension factor to go beyond furthest throw
+            val distance = kotlin.math.sqrt(sectorX * sectorX + sectorY * sectorY)
+            val extendedDistance = kotlin.math.max(distance * 1.5, maxDisplayDistance * 1.1)
+            val extensionRatio = extendedDistance / distance
+            
+            // Convert calibrated coordinates to screen coordinates (extended)
+            val calibratedScreenX = centerX + sectorX.toFloat() * pixelsPerMeter * extensionRatio.toFloat()
+            val calibratedScreenY = centerY - sectorY.toFloat() * pixelsPerMeter * extensionRatio.toFloat()
+            
+            // Draw calibrated right sector line (where the measurement was taken) - extended
+            drawLine(
+                color = androidx.compose.ui.graphics.Color(0xFF4CAF50), // Green for calibrated line
+                start = Offset(centerX, centerY),
+                end = Offset(calibratedScreenX, calibratedScreenY),
+                strokeWidth = 4.dp.toPx()
+            )
+            
+            // Draw left sector line as mirror of right line (same angle, opposite side) - extended
+            val leftScreenX = centerX - sectorX.toFloat() * pixelsPerMeter * extensionRatio.toFloat()
+            val leftScreenY = centerY - sectorY.toFloat() * pixelsPerMeter * extensionRatio.toFloat()
+            drawLine(
+                color = androidx.compose.ui.graphics.Color(0xFF4CAF50), // Green for calibrated line
+                start = Offset(centerX, centerY),
+                end = Offset(leftScreenX, leftScreenY),
+                strokeWidth = 4.dp.toPx()
+            )
+            
+            // Add a small check mark at the original calibrated position (not extended)
+            val originalScreenX = centerX + sectorX.toFloat() * pixelsPerMeter
+            val originalScreenY = centerY - sectorY.toFloat() * pixelsPerMeter
+            val checkSize = 12.dp.toPx()
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color(0xFF4CAF50),
+                radius = checkSize,
+                center = Offset(originalScreenX, originalScreenY),
+                style = androidx.compose.ui.graphics.drawscope.Fill
+            )
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color.White,
+                radius = checkSize * 0.6f,
+                center = Offset(originalScreenX, originalScreenY),
+                style = androidx.compose.ui.graphics.drawscope.Fill
+            )
+        } else {
+            // Use standard UKA/WA sector angle (34.92° total sector)
+            val sectorAngleDegrees = 34.92f / 2f // Half angle for each side (17.46°)
+            val sectorAngleRadians = Math.toRadians(sectorAngleDegrees.toDouble()).toFloat()
+            
+            // Left sector line - extended beyond furthest throw
+            val extendedDistance = maxDisplayDistance * 1.1f // Extend 10% beyond
+            val leftLineEndX = centerX - sin(sectorAngleRadians) * extendedDistance * pixelsPerMeter
+            val leftLineEndY = centerY - cos(sectorAngleRadians) * extendedDistance * pixelsPerMeter
+            drawLine(
+                color = sectorLineColor,
+                start = Offset(centerX, centerY),
+                end = Offset(leftLineEndX, leftLineEndY),
+                strokeWidth = 3.dp.toPx()
+            )
+            
+            // Right sector line - extended beyond furthest throw  
+            val rightLineEndX = centerX + sin(sectorAngleRadians) * extendedDistance * pixelsPerMeter
+            val rightLineEndY = centerY - cos(sectorAngleRadians) * extendedDistance * pixelsPerMeter
+            drawLine(
+                color = sectorLineColor,
+                start = Offset(centerX, centerY),
+                end = Offset(rightLineEndX, rightLineEndY),
+                strokeWidth = 3.dp.toPx()
+            )
+        }
+        
+        // Center line (0° reference) - extended
+        val extendedCenterDistance = maxDisplayDistance * 1.1f
+        drawLine(
+            color = sectorLineColor,
+            start = Offset(centerX, centerY),
+            end = Offset(centerX, centerY - extendedCenterDistance * pixelsPerMeter),
+            strokeWidth = 3.dp.toPx()
+        )
+        
+        // Draw throw points using actual coordinates
+        heatMapData.coordinates.forEach { coord ->
+            // Map actual X,Y coordinates to screen position
+            val throwX = centerX + coord.x.toFloat() * pixelsPerMeter
+            val throwY = centerY - coord.y.toFloat() * pixelsPerMeter  // Use actual Y coordinate
+            
+            // Draw all throws
+            drawCircle(
+                color = throwPointColor,
+                radius = 6.dp.toPx(),
+                center = Offset(throwX, throwY),
+                style = androidx.compose.ui.graphics.drawscope.Fill
+            )
+            // White border for visibility
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color.White,
+                radius = 6.dp.toPx(),
+                center = Offset(throwX, throwY),
+                style = Stroke(width = 1.5.dp.toPx())
+            )
+        }
+        
+        // Draw circle center
+        drawCircle(
+            color = centerColor,
+            radius = 12.dp.toPx(),
+            center = Offset(centerX, centerY),
+            style = androidx.compose.ui.graphics.drawscope.Fill
+        )
+        
+        // Draw target circle (throwing circle outline) - actual size
+        val targetRadiusPixels = heatMapData.targetRadius.toFloat() * pixelsPerMeter
+        drawCircle(
+            color = centerColor,
+            radius = targetRadiusPixels,
+            center = Offset(centerX, centerY),
+            style = Stroke(width = 3.dp.toPx())
+        )
+    }
+}
+
+@Composable
+fun HeatMapDistanceLabels(
+    heatMapData: HeatMapData,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val canvasWidth = constraints.maxWidth.toFloat()
+        val canvasHeight = constraints.maxHeight.toFloat()
+        val centerX = canvasWidth / 2f
+        val centerY = canvasHeight * 0.9f
+        
+        // Calculate scale matching the heat map
+        val maxDisplayDistance = heatMapData.optimalScale.toFloat()
+        val pixelsPerMeter = (canvasHeight * 0.85f) / maxDisplayDistance
+        
+        // Distance label positioning - 45 degrees (northeast)
+        val labelAngleRadians = Math.toRadians(45.0) // 45 degrees in radians
+        val labelOffsetX = kotlin.math.sin(labelAngleRadians).toFloat()
+        val labelOffsetY = -kotlin.math.cos(labelAngleRadians).toFloat() // Negative for upward direction
+        
+        // Event-specific arc intervals
+        val arcInterval = when (heatMapData.circleType) {
+            "SHOT" -> 2
+            else -> 10
+        }
+        
+        // Calculate distance range based on throws
+        val distances = if (heatMapData.coordinates.isNotEmpty()) {
+            val throwDistances = heatMapData.coordinates.map { it.distance.toInt() }
+            val minDist = throwDistances.minOrNull() ?: arcInterval
+            val maxDist = throwDistances.maxOrNull() ?: maxDisplayDistance.toInt()
+            (minDist / arcInterval * arcInterval)..(maxDist / arcInterval * arcInterval + arcInterval) step arcInterval
+        } else {
+            arcInterval..maxDisplayDistance.toInt() step arcInterval
+        }
+        
+        // Create distance labels at 45-degree positions
+        distances.forEach { distance ->
+            val radius = distance * pixelsPerMeter
+            if (radius < canvasHeight * 0.8f) {
+                // Calculate label position at 45-degree angle
+                val labelX = centerX + labelOffsetX * radius
+                val labelY = centerY + labelOffsetY * radius
+                
+                // Position the text composable
+                Text(
+                    text = distance.toString(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color(0xFF666666),
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (labelX - 15.dp.toPx()).toInt(), // Center horizontally (-15dp for text width estimate)
+                                (labelY - 10.dp.toPx()).toInt()  // Center vertically (-10dp for text height estimate)
+                            )
+                        }
+                )
+            }
+        }
+    }
+}
 
 // Detected USB Device info
 data class DetectedDevice(
@@ -107,6 +681,7 @@ data class AppState(
     val isLoading: Boolean = false,
     val devices: DeviceConfig = DeviceConfig(),
     val calibration: CalibrationState = CalibrationState(),
+    val calibrationHistory: List<CalibrationRecord> = emptyList(),
     val throwCoordinates: List<ThrowCoordinate> = emptyList(),
     val deviceSetupVisible: Boolean = false,
     val selectedDeviceForConfig: String? = null,
@@ -124,6 +699,86 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     
     // EDM Module for device communication
     private val edmModule = EDMModule(context)
+    
+    // SharedPreferences for persistent storage
+    private val sharedPrefs = context.getSharedPreferences("PolyFieldCalibrations", android.content.Context.MODE_PRIVATE)
+    
+    init {
+        // Load calibration history on startup
+        loadCalibrationHistoryFromDisk()
+    }
+    
+    /**
+     * Load calibration history from persistent storage
+     */
+    private fun loadCalibrationHistoryFromDisk() {
+        try {
+            val jsonString = sharedPrefs.getString("calibration_history", "[]") ?: "[]"
+            val jsonArray = org.json.JSONArray(jsonString)
+            val calibrations = mutableListOf<CalibrationRecord>()
+            
+            for (i in 0 until jsonArray.length()) {
+                val jsonObj = jsonArray.getJSONObject(i)
+                
+                // Parse station coordinates
+                val stationCoordinates = if (jsonObj.has("stationCoordinates")) {
+                    val coordsObj = jsonObj.getJSONObject("stationCoordinates")
+                    Pair(coordsObj.getDouble("x"), coordsObj.getDouble("y"))
+                } else null
+                
+                // Parse edge result
+                val edgeResult = if (jsonObj.has("edgeResult")) {
+                    val edgeObj = jsonObj.getJSONObject("edgeResult")
+                    val measurementsArray = edgeObj.getJSONArray("measurements")
+                    val measurements = mutableListOf<Double>()
+                    for (j in 0 until measurementsArray.length()) {
+                        measurements.add(measurementsArray.getDouble(j))
+                    }
+                    
+                    EdgeResult(
+                        averageRadius = edgeObj.getDouble("averageRadius"),
+                        toleranceCheck = edgeObj.getBoolean("toleranceCheck"),
+                        measurements = measurements,
+                        deviation = edgeObj.getDouble("deviation")
+                    )
+                } else null
+                
+                // Parse sector line coordinates
+                val sectorLineCoordinates = if (jsonObj.has("sectorLineCoordinates")) {
+                    val coordsObj = jsonObj.getJSONObject("sectorLineCoordinates")
+                    Pair(coordsObj.getDouble("x"), coordsObj.getDouble("y"))
+                } else null
+                
+                val calibration = CalibrationRecord(
+                    id = jsonObj.getString("id"),
+                    circleType = jsonObj.getString("circleType"),
+                    targetRadius = jsonObj.getDouble("targetRadius"),
+                    timestamp = jsonObj.getLong("timestamp"),
+                    dateString = jsonObj.getString("dateString"),
+                    stationCoordinates = stationCoordinates,
+                    edgeResult = edgeResult,
+                    sectorLineDistance = if (jsonObj.has("sectorLineDistance")) jsonObj.getDouble("sectorLineDistance") else null,
+                    sectorLineCoordinates = sectorLineCoordinates
+                )
+                
+                calibrations.add(calibration)
+            }
+            
+            // Filter to today's calibrations and limit to last 2
+            val todaysCalibrations = calibrations
+                .filter { it.isFromToday() }
+                .sortedByDescending { it.timestamp }
+                .take(2)
+            
+            _uiState.value = _uiState.value.copy(calibrationHistory = todaysCalibrations)
+            
+            android.util.Log.d("PolyField", "Loaded ${todaysCalibrations.size} today's calibrations from persistent storage")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Failed to load calibration history", e)
+            _uiState.value = _uiState.value.copy(calibrationHistory = emptyList())
+        }
+    }
     
     fun updateScreen(screen: String) {
         _uiState.value = _uiState.value.copy(currentScreen = screen)
@@ -157,6 +812,10 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     
     fun updateSettings(settings: AppSettings) {
         _uiState.value = _uiState.value.copy(settings = settings)
+        
+        // Update EDM module with selected device
+        edmModule.setSelectedEDMDevice(settings.selectedEDMDevice)
+        android.util.Log.d("PolyField", "Updated EDM device to: ${settings.selectedEDMDevice.displayName}")
     }
     
     fun updateDetectedDevices(devices: List<DetectedDevice>) {
@@ -176,16 +835,22 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         val usbDevices = (usbDevicesResult["ports"] as? List<Map<String, Any>>) ?: emptyList()
         
         val detectedDevices = if (usbDevices.isEmpty()) {
-            // If no real devices found, add a test device to verify UI functionality
-            android.util.Log.d("PolyField", "No real USB devices found - adding test device for UI verification")
-            listOf(
-                DetectedDevice(
-                    vendorId = 1027,  // FTDI VID
-                    productId = 24577, // FTDI PID
-                    deviceName = "Test FTDI Device - FT232R USB UART (VID:0403 PID:6001)",
-                    serialPath = "/dev/ttyUSB0"
+            // In live mode, show no devices if none detected
+            // In demo mode, add a test device for UI verification
+            if (_uiState.value.isDemoMode) {
+                android.util.Log.d("PolyField", "Demo mode: No real USB devices found - adding test device for UI verification")
+                listOf(
+                    DetectedDevice(
+                        vendorId = 1027,  // FTDI VID
+                        productId = 24577, // FTDI PID
+                        deviceName = "Test FTDI Device - FT232R USB UART (VID:0403 PID:6001)",
+                        serialPath = "/dev/ttyUSB0"
+                    )
                 )
-            )
+            } else {
+                android.util.Log.d("PolyField", "Live mode: No USB devices found - showing empty list")
+                emptyList()
+            }
         } else {
             usbDevices.mapIndexed { index, deviceInfo ->
                 DetectedDevice(
@@ -439,6 +1104,88 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         }
     }
     
+    fun measureSectorLine() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        
+        if (_uiState.value.isDemoMode) {
+            // Demo mode - simulate sector line measurement
+            // Sector lines are at 17.46° from centre for shot put/discus/hammer
+            val sectorAngleDegrees = 17.46
+            val distanceFromCentre = 15.0 + kotlin.random.Random.nextDouble() * 10.0 // 15-25m from centre
+            
+            val sectorLineCoordinates = Pair(
+                distanceFromCentre * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
+                distanceFromCentre * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
+            )
+            
+            _uiState.value = _uiState.value.copy(
+                calibration = _uiState.value.calibration.copy(
+                    sectorLineSet = true,
+                    sectorLineDistance = distanceFromCentre,
+                    sectorLineCoordinates = sectorLineCoordinates
+                ),
+                isLoading = false
+            )
+            
+            // Save complete calibration to history
+            saveCurrentCalibrationToHistory()
+        } else {
+            // Live mode - use real EDM device for sector line measurement
+            if (!_uiState.value.devices.edm.connected) {
+                showErrorDialog(
+                    "Device Error",
+                    "EDM device is not connected. Please connect a device first."
+                )
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
+            viewModelScope.launch {
+                try {
+                    val reading = edmModule.getSingleEDMReading("edm")
+                    
+                    if (reading.success && reading.distance != null) {
+                        val distance = reading.distance
+                        android.util.Log.d("PolyField", "Sector line measurement successful: ${distance}m")
+                        
+                        // Calculate sector line coordinates based on known UKA/WA angle (17.46°)
+                        val sectorAngleDegrees = 17.46
+                        val sectorLineCoordinates = Pair(
+                            distance * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
+                            distance * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
+                        )
+                        
+                        _uiState.value = _uiState.value.copy(
+                            calibration = _uiState.value.calibration.copy(
+                                sectorLineSet = true,
+                                sectorLineDistance = distance,
+                                sectorLineCoordinates = sectorLineCoordinates
+                            ),
+                            isLoading = false
+                        )
+                        
+                        // Save complete calibration to history
+                        saveCurrentCalibrationToHistory()
+                    } else {
+                        android.util.Log.e("PolyField", "Sector line measurement failed: ${reading.error}")
+                        showErrorDialog(
+                            "Sector Line Measurement Failed",
+                            reading.error ?: "Failed to measure sector line with EDM device"
+                        )
+                        _uiState.value = _uiState.value.copy(isLoading = false)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PolyField", "Sector line measurement error", e)
+                    showErrorDialog(
+                        "Sector Line Measurement Failed",
+                        e.message ?: "Unknown error occurred while measuring sector line"
+                    )
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            }
+        }
+    }
+    
     fun measureDistance() {
         _uiState.value = _uiState.value.copy(isLoading = true)
         
@@ -450,14 +1197,9 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 isLoading = false
             )
             
-            // Store throw coordinate
-            val throwCoord = ThrowCoordinate(
-                x = kotlin.random.Random.nextDouble() * 20 - 10,
-                y = kotlin.random.Random.nextDouble() * 50 + distance,
-                distance = distance,
-                circleType = _uiState.value.calibration.circleType,
-                timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-            )
+            // Store throw coordinate - generate realistic within sector lines
+            val throwCoord = generateDemoThrowCoordinate(distance)
+            
             
             _uiState.value = _uiState.value.copy(
                 throwCoordinates = _uiState.value.throwCoordinates + throwCoord
@@ -493,14 +1235,9 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                             isLoading = false
                         )
                         
-                        // Store throw coordinate
-                        val throwCoord = ThrowCoordinate(
-                            x = kotlin.random.Random.nextDouble() * 20 - 10,
-                            y = kotlin.random.Random.nextDouble() * 50 + distance,
-                            distance = distance,
-                            circleType = _uiState.value.calibration.circleType,
-                            timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        )
+                        // TODO: For now use demo coordinate generation for live mode
+                        // In future, use proper EDM angle readings to calculate real coordinates
+                        val throwCoord = generateDemoThrowCoordinate(distance)
                         
                         _uiState.value = _uiState.value.copy(
                             throwCoordinates = _uiState.value.throwCoordinates + throwCoord
@@ -585,6 +1322,137 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         )
     }
     
+    fun resetEdgeVerification() {
+        val currentCalibration = _uiState.value.calibration
+        _uiState.value = _uiState.value.copy(
+            calibration = currentCalibration.copy(
+                edgeVerified = false,
+                edgeResult = null
+            )
+        )
+        android.util.Log.d("PolyField", "Edge verification reset - centre preserved")
+    }
+    
+    // Calibration History Management
+    fun saveCurrentCalibrationToHistory() {
+        val currentCalibration = _uiState.value.calibration
+        
+        // Only save if we have meaningful calibration data
+        if (currentCalibration.centreSet && currentCalibration.edgeVerified && currentCalibration.sectorLineSet) {
+            val calibrationRecord = CalibrationRecord(
+                circleType = currentCalibration.circleType,
+                targetRadius = currentCalibration.targetRadius,
+                stationCoordinates = currentCalibration.stationCoordinates,
+                edgeResult = currentCalibration.edgeResult,
+                sectorLineDistance = currentCalibration.sectorLineDistance,
+                sectorLineCoordinates = currentCalibration.sectorLineCoordinates
+            )
+            
+            // Add to history and keep only last 2 records
+            val updatedHistory = (_uiState.value.calibrationHistory + calibrationRecord)
+                .sortedByDescending { it.timestamp }
+                .take(2)
+            
+            _uiState.value = _uiState.value.copy(
+                calibrationHistory = updatedHistory
+            )
+            
+            // Save to persistent storage
+            saveCalibrationHistoryToDisk()
+            
+            android.util.Log.d("PolyField", "Saved calibration to history: ${calibrationRecord.getDisplayName()}")
+        }
+    }
+    
+    /**
+     * Save calibration history to persistent storage
+     */
+    private fun saveCalibrationHistoryToDisk() {
+        try {
+            val calibrations = _uiState.value.calibrationHistory
+            val jsonArray = org.json.JSONArray()
+            
+            calibrations.forEach { calibration ->
+                val jsonObj = org.json.JSONObject().apply {
+                    put("id", calibration.id)
+                    put("circleType", calibration.circleType)
+                    put("targetRadius", calibration.targetRadius)
+                    put("timestamp", calibration.timestamp)
+                    put("dateString", calibration.dateString)
+                    
+                    // Station coordinates
+                    calibration.stationCoordinates?.let { coords ->
+                        val coordsObj = org.json.JSONObject().apply {
+                            put("x", coords.first)
+                            put("y", coords.second)
+                        }
+                        put("stationCoordinates", coordsObj)
+                    }
+                    
+                    // Edge result
+                    calibration.edgeResult?.let { edge ->
+                        val edgeObj = org.json.JSONObject().apply {
+                            put("averageRadius", edge.averageRadius)
+                            put("toleranceCheck", edge.toleranceCheck)
+                            put("measurements", org.json.JSONArray(edge.measurements))
+                            put("deviation", edge.deviation)
+                        }
+                        put("edgeResult", edgeObj)
+                    }
+                    
+                    // Sector line data
+                    calibration.sectorLineDistance?.let { distance ->
+                        put("sectorLineDistance", distance)
+                    }
+                    
+                    calibration.sectorLineCoordinates?.let { coords ->
+                        val coordsObj = org.json.JSONObject().apply {
+                            put("x", coords.first)
+                            put("y", coords.second)
+                        }
+                        put("sectorLineCoordinates", coordsObj)
+                    }
+                }
+                jsonArray.put(jsonObj)
+            }
+            
+            sharedPrefs.edit()
+                .putString("calibration_history", jsonArray.toString())
+                .apply()
+                
+            android.util.Log.d("PolyField", "Saved ${calibrations.size} calibrations to persistent storage")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Failed to save calibration history", e)
+        }
+    }
+    
+    fun getTodaysCalibrations(): List<CalibrationRecord> {
+        return _uiState.value.calibrationHistory
+            .filter { it.isFromToday() && it.circleType == _uiState.value.calibration.circleType }
+            .sortedByDescending { it.timestamp }
+    }
+    
+    fun loadHistoricalCalibration(calibrationRecord: CalibrationRecord) {
+        _uiState.value = _uiState.value.copy(
+            calibration = _uiState.value.calibration.copy(
+                circleType = calibrationRecord.circleType,
+                targetRadius = calibrationRecord.targetRadius,
+                centreSet = calibrationRecord.stationCoordinates != null,
+                centreTimestamp = calibrationRecord.dateString,
+                stationCoordinates = calibrationRecord.stationCoordinates,
+                edgeVerified = calibrationRecord.edgeResult != null,
+                edgeResult = calibrationRecord.edgeResult,
+                sectorLineSet = calibrationRecord.sectorLineDistance != null,
+                sectorLineDistance = calibrationRecord.sectorLineDistance,
+                sectorLineCoordinates = calibrationRecord.sectorLineCoordinates,
+                selectedHistoricalCalibration = calibrationRecord
+            )
+        )
+        
+        android.util.Log.d("PolyField", "Loaded historical calibration: ${calibrationRecord.getDisplayName()}")
+    }
+    
     fun resetSession() {
         _uiState.value = _uiState.value.copy(
             throwCoordinates = emptyList(),
@@ -615,8 +1483,9 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     }
     
     fun toggleHeatMap() {
+        // Navigate to heat map screen
         _uiState.value = _uiState.value.copy(
-            heatMapVisible = !_uiState.value.heatMapVisible
+            currentScreen = "HEAT_MAP"
         )
     }
     
@@ -630,15 +1499,46 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         }
         return baseDistance
     }
+    
+    private fun generateDemoThrowCoordinate(distance: Double): ThrowCoordinate {
+        // Generate throw within UKA/WA sector lines (34.92° total sector, 17.46° each side)
+        val maxSectorAngle = Math.toRadians(17.46) // Half sector angle in radians
+        
+        // Random angle within the sector (can be negative for left side)
+        val throwAngle = kotlin.random.Random.nextDouble() * 2 * maxSectorAngle - maxSectorAngle
+        
+        // Add some variation to the distance (±10% for realism)
+        val distanceVariation = 0.9 + kotlin.random.Random.nextDouble() * 0.2 // 0.9 to 1.1
+        val actualDistance = distance * distanceVariation
+        
+        // Calculate X (lateral) and Y (forward) coordinates
+        val x = kotlin.math.sin(throwAngle) * actualDistance
+        val y = kotlin.math.cos(throwAngle) * actualDistance
+        
+        return ThrowCoordinate(
+            x = x,
+            y = y,
+            distance = actualDistance,
+            circleType = _uiState.value.calibration.circleType,
+            timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+            id = java.util.UUID.randomUUID().toString()
+        )
+    }
 }
 
 // Settings Screen
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     isDemoMode: Boolean,
     isDoubleReadMode: Boolean,
+    selectedEDMDevice: EDMDeviceSpec,
+    serverIpAddress: String,
+    serverPort: Int,
     onDemoModeToggle: () -> Unit,
     onDoubleReadModeToggle: (Boolean) -> Unit,
+    onEDMDeviceChange: (EDMDeviceSpec) -> Unit,
+    onServerSettingsChange: (String, Int) -> Unit,
     onBackClick: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -650,7 +1550,8 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(maxOf(20f, screenWidth * 0.025f).dp),
+                .verticalScroll(rememberScrollState())
+                .padding(maxOf(16f, screenWidth * 0.02f).dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Title
@@ -660,7 +1561,7 @@ fun SettingsScreen(
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF333333),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 40.dp)
+                modifier = Modifier.padding(bottom = 20.dp)
             )
             
             // Settings options
@@ -673,8 +1574,8 @@ fun SettingsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // Demo/Live Mode Toggle
                     Row(
@@ -704,6 +1605,79 @@ fun SettingsScreen(
                                 uncheckedThumbColor = Color.White,
                                 uncheckedTrackColor = Color(0xFF4CAF50)
                             )
+                        )
+                    }
+                    
+                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    
+                    // EDM Device Selection
+                    Column {
+                        Text(
+                            text = "EDM Device Type",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        
+                        var edmDeviceExpanded by remember { mutableStateOf(false) }
+                        val availableDevices = EDMDeviceRegistry.getAvailableDevices()
+                        
+                        ExposedDropdownMenuBox(
+                            expanded = edmDeviceExpanded,
+                            onExpandedChange = { edmDeviceExpanded = !edmDeviceExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = selectedEDMDevice.displayName,
+                                onValueChange = { },
+                                readOnly = true,
+                                label = { Text("Selected EDM Device") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = edmDeviceExpanded)
+                                },
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF1976D2),
+                                    unfocusedBorderColor = Color(0xFFCCCCCC)
+                                )
+                            )
+                            
+                            ExposedDropdownMenu(
+                                expanded = edmDeviceExpanded,
+                                onDismissRequest = { edmDeviceExpanded = false }
+                            ) {
+                                availableDevices.forEach { device ->
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Column {
+                                                Text(
+                                                    text = device.displayName,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = "${device.manufacturer.name} • ${device.baudRate} baud",
+                                                    fontSize = 12.sp,
+                                                    color = Color(0xFF666666)
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            onEDMDeviceChange(device)
+                                            edmDeviceExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Text(
+                            text = "Current: ${selectedEDMDevice.manufacturer.name} ${selectedEDMDevice.model}",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666),
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                     }
                     
@@ -739,8 +1713,88 @@ fun SettingsScreen(
                             )
                         )
                     }
+                    
+                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    
+                    // Server Settings
+                    Column {
+                        Text(
+                            text = "Server Settings",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        var tempIpAddress by remember { mutableStateOf(serverIpAddress) }
+                        var tempPort by remember { mutableStateOf(serverPort.toString()) }
+                        
+                        // IP Address field
+                        OutlinedTextField(
+                            value = tempIpAddress,
+                            onValueChange = { tempIpAddress = it },
+                            label = { Text("Server IP Address") },
+                            placeholder = { Text("192.168.0.90") },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF1976D2),
+                                unfocusedBorderColor = Color(0xFFCCCCCC)
+                            ),
+                            singleLine = true
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        // Port field
+                        OutlinedTextField(
+                            value = tempPort,
+                            onValueChange = { newValue ->
+                                // Only allow numeric input
+                                if (newValue.all { it.isDigit() } && newValue.length <= 5) {
+                                    tempPort = newValue
+                                }
+                            },
+                            label = { Text("Server Port") },
+                            placeholder = { Text("8080") },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF1976D2),
+                                unfocusedBorderColor = Color(0xFFCCCCCC)
+                            ),
+                            singleLine = true
+                        )
+                        
+                        // Apply button
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    val portNumber = tempPort.toIntOrNull() ?: 8080
+                                    onServerSettingsChange(tempIpAddress, portNumber)
+                                }
+                            ) {
+                                Text(
+                                    text = "Apply",
+                                    color = Color(0xFF1976D2)
+                                )
+                            }
+                        }
+                        
+                        Text(
+                            text = "Current: $serverIpAddress:$serverPort",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
                 }
             }
+            
+            Spacer(modifier = Modifier.height(16.dp))
         }
         
         // Back button
@@ -1112,10 +2166,14 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 "CALIBRATION_SET_CENTRE" -> CalibrationSetCentreScreenExact(
                     calibration = uiState.calibration,
                     isLoading = uiState.isLoading,
+                    availableCalibrations = viewModel.getTodaysCalibrations(),
                     onSetCentre = { viewModel.setCentre() },
                     onResetCentre = { 
                         viewModel.resetCalibration()
                         viewModel.updateCircleType(uiState.calibration.circleType)
+                    },
+                    onLoadHistoricalCalibration = { calibrationRecord ->
+                        viewModel.loadHistoricalCalibration(calibrationRecord)
                     }
                 )
                 "CALIBRATION_VERIFY_EDGE" -> CalibrationVerifyEdgeScreenExact(
@@ -1124,17 +2182,15 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                     isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onVerifyEdge = { viewModel.verifyEdge() },
                     onResetEdge = { 
-                        viewModel.resetCalibration()
-                        viewModel.updateCircleType(uiState.calibration.circleType)
+                        viewModel.resetEdgeVerification()
                     }
                 )
-                "CALIBRATION_EDGE_RESULTS" -> CalibrationEdgeResultsScreenExact(
+                "CALIBRATION_SECTOR_LINE" -> CalibrationSectorLineScreen(
                     calibration = uiState.calibration,
+                    isLoading = uiState.isLoading,
+                    onMeasureSectorLine = { viewModel.measureSectorLine() },
                     onContinue = {
                         viewModel.updateScreen("MEASUREMENT")
-                    },
-                    onRemeasure = {
-                        viewModel.updateScreen("CALIBRATION_VERIFY_EDGE")
                     }
                 )
                 "MEASUREMENT" -> MeasurementScreenExact(
@@ -1157,12 +2213,28 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 "SETTINGS" -> SettingsScreen(
                     isDemoMode = uiState.isDemoMode,
                     isDoubleReadMode = uiState.settings.isDoubleReadMode,
+                    selectedEDMDevice = uiState.settings.selectedEDMDevice,
+                    serverIpAddress = uiState.settings.serverIpAddress,
+                    serverPort = uiState.settings.serverPort,
                     onDemoModeToggle = { viewModel.toggleDemoMode() },
                     onDoubleReadModeToggle = { enabled ->
                         viewModel.updateSettings(uiState.settings.copy(isDoubleReadMode = enabled))
                     },
+                    onEDMDeviceChange = { edmDevice ->
+                        viewModel.updateSettings(uiState.settings.copy(selectedEDMDevice = edmDevice))
+                    },
+                    onServerSettingsChange = { ipAddress, port ->
+                        viewModel.updateSettings(uiState.settings.copy(serverIpAddress = ipAddress, serverPort = port))
+                    },
                     onBackClick = {
                         viewModel.updateScreen("SELECT_EVENT_TYPE")
+                    }
+                )
+                "HEAT_MAP" -> HeatMapScreen(
+                    calibration = uiState.calibration,
+                    throwCoordinates = uiState.throwCoordinates,
+                    onBackClick = {
+                        viewModel.updateScreen("MEASUREMENT")
                     }
                 )
             }
@@ -1237,8 +2309,9 @@ private fun getScreenTitle(screen: String, eventType: String, circleType: String
         "CALIBRATION_SELECT_CIRCLE" -> "Circle Selection"
         "CALIBRATION_SET_CENTRE" -> "Set Circle Centre - ${circleType.replace("_", " ")}"
         "CALIBRATION_VERIFY_EDGE" -> "Verify Circle Edge - ${circleType.replace("_", " ")}"
-        "CALIBRATION_EDGE_RESULTS" -> "Calibration Results - ${circleType.replace("_", " ")}"
+        "CALIBRATION_SECTOR_LINE" -> "Sector Line Check Mark - ${circleType.replace("_", " ")}"
         "MEASUREMENT" -> "Measurement - ${circleType.replace("_", " ")}"
+        "HEAT_MAP" -> "Heat Map - ${circleType.replace("_", " ")}"
         else -> "PolyField"
     }
 }
@@ -1250,7 +2323,8 @@ private fun canGoBack(screen: String): Boolean {
 private fun canGoForward(screen: String): Boolean {
     return when (screen) {
         "SELECT_EVENT_TYPE", "DEVICE_SETUP", "CALIBRATION_SELECT_CIRCLE", 
-        "CALIBRATION_SET_CENTRE", "CALIBRATION_VERIFY_EDGE", "CALIBRATION_EDGE_RESULTS" -> true
+        "CALIBRATION_SET_CENTRE", "CALIBRATION_VERIFY_EDGE", "CALIBRATION_SECTOR_LINE" -> true
+        "HEAT_MAP" -> false // Remove next button from heat map
         else -> false
     }
 }
@@ -1265,10 +2339,11 @@ private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
         "CALIBRATION_SELECT_CIRCLE" -> "DEVICE_SETUP"
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_SELECT_CIRCLE"
         "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SET_CENTRE"
-        "CALIBRATION_EDGE_RESULTS" -> "CALIBRATION_VERIFY_EDGE"
+        "CALIBRATION_SECTOR_LINE" -> "CALIBRATION_VERIFY_EDGE"
         "MEASUREMENT" -> {
-            if (uiState.eventType == "Throws") "CALIBRATION_VERIFY_EDGE" else "DEVICE_SETUP"
+            if (uiState.eventType == "Throws") "CALIBRATION_SECTOR_LINE" else "DEVICE_SETUP"
         }
+        "HEAT_MAP" -> "MEASUREMENT"
         else -> uiState.currentScreen
     }
     viewModel.updateScreen(previousScreen)
@@ -1283,8 +2358,8 @@ private fun navigateForward(viewModel: AppViewModel, uiState: AppState) {
             else uiState.currentScreen // Don't advance if no circle selected
         }
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_VERIFY_EDGE"
-        "CALIBRATION_VERIFY_EDGE" -> "MEASUREMENT" // Skip results screen, go direct to measurement
-        "CALIBRATION_EDGE_RESULTS" -> "MEASUREMENT"
+        "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SECTOR_LINE"
+        "CALIBRATION_SECTOR_LINE" -> "MEASUREMENT"
         else -> uiState.currentScreen
     }
     viewModel.updateScreen(nextScreen)

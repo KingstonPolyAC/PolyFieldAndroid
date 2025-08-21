@@ -7,6 +7,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * EDM (Electronic Distance Measurement) Module for device communication
@@ -20,6 +21,10 @@ class EDMModule(private val context: Context) {
     
     // Device connection states
     private val connectedDevices = mutableMapOf<String, DeviceConnection>()
+    
+    // EDM device management
+    private val edmCommunicationBridge = EDMCommunicationBridge()
+    private var selectedEDMDevice: EDMDeviceSpec = EDMDeviceRegistry.getDefaultDevice()
     
     data class DeviceConnection(
         val deviceType: String,
@@ -154,12 +159,27 @@ class EDMModule(private val context: Context) {
     }
     
     /**
+     * Set the selected EDM device type
+     */
+    fun setSelectedEDMDevice(deviceSpec: EDMDeviceSpec) {
+        selectedEDMDevice = deviceSpec
+        Log.d(TAG, "Selected EDM device: ${deviceSpec.displayName}")
+    }
+    
+    /**
+     * Get the currently selected EDM device
+     */
+    fun getSelectedEDMDevice(): EDMDeviceSpec {
+        return selectedEDMDevice
+    }
+    
+    /**
      * Get single EDM reading for distance measurement (no tolerance checking)
-     * Calls the native Go Mobile module for a single reading
+     * Uses device translator to communicate with actual EDM device, then calls Go Mobile for calculations
      */
     suspend fun getSingleEDMReading(deviceType: String): EDMReading {
         return withContext(Dispatchers.IO) {
-            Log.d(TAG, "Getting single EDM reading from native module: $deviceType")
+            Log.d(TAG, "Getting single EDM reading with ${selectedEDMDevice.displayName}: $deviceType")
             
             val connection = connectedDevices[deviceType]
             if (connection == null || !connection.isConnected) {
@@ -170,30 +190,22 @@ class EDMModule(private val context: Context) {
             }
             
             try {
-                Log.d(TAG, "Calling native mobile.Mobile.getSingleEDMReading($deviceType)")
+                // Check if this is a USB device that needs Android-side communication
+                if (connection.connectionType == "usb") {
+                    return@withContext performUSBEDMReading(deviceType, single = true)
+                }
                 
-                // Call native Go Mobile module for single reading
-                // The native module handles:
-                // 1. Taking one EDM reading 
-                // 2. No tolerance checking
-                // 3. 10-second timeout
-                // Note: For now, use the reliable reading method but treat as single read
+                // For serial/network connections, delegate to Go Mobile
+                Log.d(TAG, "Calling native mobile.Mobile.getReliableEDMReading($deviceType)")
                 val result = mobile.Mobile.getReliableEDMReading(deviceType)
                 
                 Log.d(TAG, "Native module single reading result: $result")
                 
                 // Parse the JSON result from native module
-                val jsonResult = org.json.JSONObject(result as String)
+                val jsonResult = JSONObject(result as String)
                 
                 if (jsonResult.has("error")) {
                     val error = jsonResult.getString("error")
-                    if (error == "USB_ANDROID_DELEGATE") {
-                        // Handle USB delegation if needed
-                        return@withContext EDMReading(
-                            success = false,
-                            error = "USB communication not yet implemented"
-                        )
-                    }
                     return@withContext EDMReading(
                         success = false,
                         error = error
@@ -220,14 +232,81 @@ class EDMModule(private val context: Context) {
             }
         }
     }
+    
+    /**
+     * Perform USB EDM reading using device translator, then send result to Go Mobile
+     */
+    private suspend fun performUSBEDMReading(deviceType: String, single: Boolean = false): EDMReading {
+        try {
+            // Get USB Manager and find connected USB device
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+            val usbDevices = getConnectedEDMDevices()
+            
+            if (usbDevices.isEmpty()) {
+                return EDMReading(
+                    success = false,
+                    error = "No compatible EDM devices connected via USB"
+                )
+            }
+            
+            val usbDevice = usbDevices.first() // Use first compatible device
+            
+            // Use device translator to communicate with EDM device
+            val translationResult = edmCommunicationBridge.performMeasurement(
+                selectedEDMDevice,
+                usbManager,
+                usbDevice
+            )
+            
+            if (!translationResult.success) {
+                return EDMReading(
+                    success = false,
+                    error = translationResult.error ?: "EDM measurement failed"
+                )
+            }
+            
+            // Parse the Go Mobile format result
+            val goMobileResult = translationResult.goMobileFormat!!
+            val jsonResult = JSONObject(goMobileResult)
+            
+            val slopeDistanceMm = jsonResult.getDouble("slopeDistanceMm")
+            val distanceMeters = slopeDistanceMm / 1000.0
+            
+            Log.d(TAG, "USB EDM reading successful: ${distanceMeters}m via ${selectedEDMDevice.displayName}")
+            
+            return EDMReading(
+                success = true,
+                distance = distanceMeters
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "USB EDM reading failed", e)
+            return EDMReading(
+                success = false,
+                error = "USB measurement failed: ${e.message}"
+            )
+        }
+    }
+    
+    /**
+     * Get connected USB devices that match supported EDM devices
+     */
+    private fun getConnectedEDMDevices(): List<UsbDevice> {
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+        val deviceList = usbManager.deviceList
+        
+        return deviceList.values.filter { device ->
+            EDMDeviceRegistry.matchUsbDevice(device.vendorId, device.productId) != null
+        }
+    }
 
     /**
      * Get reliable EDM reading for distance measurement
-     * Calls the native Go Mobile module which handles dual reading and tolerance checking
+     * Uses device translator for USB devices, or calls Go Mobile for dual reading and tolerance checking
      */
     suspend fun getReliableEDMReading(deviceType: String): EDMReading {
         return withContext(Dispatchers.IO) {
-            Log.d(TAG, "Getting reliable EDM reading from native module: $deviceType")
+            Log.d(TAG, "Getting reliable EDM reading with ${selectedEDMDevice.displayName}: $deviceType")
             
             val connection = connectedDevices[deviceType]
             if (connection == null || !connection.isConnected) {
@@ -238,6 +317,13 @@ class EDMModule(private val context: Context) {
             }
             
             try {
+                // Check if this is a USB device that needs Android-side communication
+                if (connection.connectionType == "usb") {
+                    // For USB devices, perform double reading with tolerance checking on Android side
+                    return@withContext performDoubleUSBEDMReading(deviceType)
+                }
+                
+                // For serial/network connections, delegate to Go Mobile
                 Log.d(TAG, "Calling native mobile.Mobile.getReliableEDMReading($deviceType)")
                 
                 // Call native Go Mobile module
@@ -251,17 +337,10 @@ class EDMModule(private val context: Context) {
                 Log.d(TAG, "Native module result: $result")
                 
                 // Parse the JSON result from native module
-                val jsonResult = org.json.JSONObject(result)
+                val jsonResult = JSONObject(result)
                 
                 if (jsonResult.has("error")) {
                     val error = jsonResult.getString("error")
-                    if (error == "USB_ANDROID_DELEGATE") {
-                        // Handle USB delegation if needed
-                        return@withContext EDMReading(
-                            success = false,
-                            error = "USB communication not yet implemented"
-                        )
-                    }
                     return@withContext EDMReading(
                         success = false,
                         error = error
@@ -286,6 +365,60 @@ class EDMModule(private val context: Context) {
                     error = e.message ?: "Could not find prism. Check your aim and remeasure. If EDM displays \"STOP\" then press F1 to reset"
                 )
             }
+        }
+    }
+    
+    /**
+     * Perform double USB EDM reading with tolerance checking (mimics Go Mobile behavior)
+     */
+    private suspend fun performDoubleUSBEDMReading(deviceType: String): EDMReading {
+        try {
+            Log.d(TAG, "Performing double USB EDM reading with tolerance checking")
+            
+            // First reading
+            val reading1 = performUSBEDMReading(deviceType, single = true)
+            if (!reading1.success) {
+                return reading1
+            }
+            
+            // Wait 100ms between readings (matches Go Mobile delayBetweenReadsInPair)
+            delay(100)
+            
+            // Second reading
+            val reading2 = performUSBEDMReading(deviceType, single = true)
+            if (!reading2.success) {
+                return reading2
+            }
+            
+            // Compare readings for tolerance (3mm for slope distance - matches Go Mobile sdToleranceMm)
+            val distance1Mm = reading1.distance!! * 1000.0
+            val distance2Mm = reading2.distance!! * 1000.0
+            val difference = kotlin.math.abs(distance1Mm - distance2Mm)
+            
+            if (difference <= 3.0) { // 3mm tolerance
+                // Average the readings
+                val averageDistance = (reading1.distance!! + reading2.distance!!) / 2.0
+                
+                Log.d(TAG, "Double reading successful - R1: ${reading1.distance}m, R2: ${reading2.distance}m, Avg: ${averageDistance}m")
+                
+                return EDMReading(
+                    success = true,
+                    distance = averageDistance
+                )
+            } else {
+                Log.w(TAG, "Readings inconsistent - R1: ${reading1.distance}m, R2: ${reading2.distance}m, Diff: ${difference}mm")
+                return EDMReading(
+                    success = false,
+                    error = "Readings inconsistent. R1: ${"%.3f".format(reading1.distance)}m, R2: ${"%.3f".format(reading2.distance)}m (${difference.toInt()}mm difference)"
+                )
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Double USB EDM reading failed", e)
+            return EDMReading(
+                success = false,
+                error = "Double reading failed: ${e.message}"
+            )
         }
     }
     
@@ -374,22 +507,6 @@ class EDMModule(private val context: Context) {
         }
     }
     
-    /**
-     * Generate realistic throw distance for demo/fallback
-     */
-    private fun generateRealisticThrowDistance(): Double {
-        // Generate distances similar to real athletic performances
-        val baseDistance = when (kotlin.random.Random.nextInt(4)) {
-            0 -> 15.0 + kotlin.random.Random.nextDouble() * 8.0  // Shot: 15-23m
-            1 -> 45.0 + kotlin.random.Random.nextDouble() * 25.0 // Discus: 45-70m
-            2 -> 55.0 + kotlin.random.Random.nextDouble() * 25.0 // Hammer: 55-80m
-            3 -> 60.0 + kotlin.random.Random.nextDouble() * 30.0 // Javelin: 60-90m
-            else -> 20.0 + kotlin.random.Random.nextDouble() * 10.0
-        }
-        
-        // Add some measurement variation (±5cm)
-        return baseDistance + (kotlin.random.Random.nextDouble() - 0.5) * 0.1
-    }
     
     /**
      * List all connected USB devices (matches v16 implementation)

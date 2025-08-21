@@ -150,8 +150,8 @@ fun SelectEventTypeScreenExact(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(vertical = 20.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
+                    .padding(vertical = 20.dp, horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 EventTypeCardExact(
@@ -159,7 +159,8 @@ fun SelectEventTypeScreenExact(
                     description = "Shot, Discus, Hammer, Javelin",
                     onClick = { onEventSelected("Throws") },
                     screenWidth = screenWidth,
-                    screenHeight = screenHeight
+                    screenHeight = screenHeight,
+                    modifier = Modifier.weight(1f)
                 )
                 
                 EventTypeCardExact(
@@ -167,7 +168,8 @@ fun SelectEventTypeScreenExact(
                     description = "Long Jump, Triple Jump",
                     onClick = { onEventSelected("Horizontal Jumps") },
                     screenWidth = screenWidth,
-                    screenHeight = screenHeight
+                    screenHeight = screenHeight,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -216,11 +218,11 @@ fun EventTypeCardExact(
     description: String,
     onClick: () -> Unit,
     screenWidth: Int,
-    screenHeight: Int
+    screenHeight: Int,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
-            .width(maxOf(280f, screenWidth * 0.35f).dp)
+        modifier = modifier
             .height(maxOf(220f, screenHeight * 0.32f).dp)
             .clickable { onClick() }
             .border(
