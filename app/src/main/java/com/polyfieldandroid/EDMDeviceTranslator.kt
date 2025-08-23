@@ -254,8 +254,8 @@ object EDMDeviceRegistry {
             model = "MTS-602R+",
             displayName = "Mato MTS-602R+",
             baudRate = 9600,
-            vendorIds = listOf(1027), // FTDI VID
-            productIds = listOf(24577) // FTDI FT232R PID
+            vendorIds = listOf(1027, 6790), // FTDI VID (0x0403) + CH340 VID (0x1A86)
+            productIds = listOf(24577, 29987) // FTDI FT232R PID (0x6001) + CH340 PID (0x7523)
         )
         // Future devices will be added here:
         // "LEICA_TCR405" to EDMDeviceSpec(...),

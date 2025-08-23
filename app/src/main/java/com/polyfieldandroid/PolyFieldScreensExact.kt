@@ -316,6 +316,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.edm.serialPort,
                     ipAddress = devices.edm.ipAddress,
                     port = devices.edm.port,
+                    deviceName = devices.edm.deviceName,
                     isEnabled = true,
                     onConnect = { onConnectDevice("edm") },
                     onConfigure = { onToggleDeviceSetupModal("edm") }
@@ -332,6 +333,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.scoreboard.serialPort,
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
+                    deviceName = devices.scoreboard.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -348,6 +350,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.edm.serialPort,
                     ipAddress = devices.edm.ipAddress,
                     port = devices.edm.port,
+                    deviceName = devices.edm.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -364,6 +367,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.wind.serialPort,
                     ipAddress = devices.wind.ipAddress,
                     port = devices.wind.port,
+                    deviceName = devices.wind.deviceName,
                     isEnabled = true,
                     onConnect = { onConnectDevice("wind") },
                     onConfigure = { onToggleDeviceSetupModal("wind") }
@@ -380,6 +384,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.scoreboard.serialPort,
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
+                    deviceName = devices.scoreboard.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -401,6 +406,7 @@ fun DeviceStatusCard(
     serialPort: String,
     ipAddress: String,
     port: Int,
+    deviceName: String = "", // Real device name like "Mato MTS-602R+"
     isEnabled: Boolean = true,
     onConnect: () -> Unit,
     onConfigure: () -> Unit
@@ -449,7 +455,8 @@ fun DeviceStatusCard(
             if (!isDemoMode && isEnabled) {
                 Text(
                     text = if (connectionType == "serial") {
-                        if (connected) "Connected: $serialPort" else "Serial: $serialPort"
+                        val displayName = if (deviceName.isNotEmpty()) deviceName else serialPort
+                        if (connected) "Connected: $displayName" else "Serial: $displayName"
                     } else {
                         if (connected) "Connected: $ipAddress:$port" else "Network: $ipAddress:$port"  
                     },
@@ -457,10 +464,10 @@ fun DeviceStatusCard(
                     color = if (connected) Color(0xFF4CAF50) else Color(0xFF666666)
                 )
                 
-                // Show auto-detected info for connected devices
-                if (connected && connectionType == "serial") {
+                // Show connection type for connected devices
+                if (connected && connectionType == "serial" && deviceName.isNotEmpty()) {
                     Text(
-                        text = "Auto-detected USB device",
+                        text = "Serial: $serialPort",
                         fontSize = 12.sp,
                         color = Color(0xFF1976D2),
                         modifier = androidx.compose.ui.Modifier.padding(top = 4.dp)

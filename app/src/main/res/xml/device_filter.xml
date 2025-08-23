@@ -5,6 +5,9 @@
     <usb-device vendor-id="1027" product-id="24596" />  <!-- FTDI FT232H (0x0403, 0x6014) -->
     <usb-device vendor-id="1027" product-id="24582" />  <!-- FTDI FT2232D (0x0403, 0x6006) -->
     
+    <!-- CH340 USB-to-Serial devices (for Mato EDM) -->
+    <usb-device vendor-id="6790" product-id="29987" /> <!-- CH340 (0x1A86, 0x7523) -->
+    
     <!-- Other common USB-to-Serial devices -->
     <usb-device vendor-id="1659" product-id="8963" />  <!-- Prolific PL2303 (0x067b, 0x2303) -->
     <usb-device vendor-id="4292" product-id="60000" /> <!-- Silicon Labs CP2102 (0x10c4, 0xea60) -->

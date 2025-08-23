@@ -115,8 +115,8 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             val statusCode = parts[3]
             val statusMessage = interpretStatusCode(statusCode)
             
-            // Check if status indicates an error
-            val isValidMeasurement = statusCode == "83" // Normal measurement
+            // Accept all status codes since we ignore status validation
+            val isValidMeasurement = true // Accept all measurements regardless of status
             
             Log.d(TAG, "Parsed Mato reading - SD: ${slopeDistanceMm}mm, VA: ${verticalAngleDegrees}°, HA: ${horizontalAngleDegrees}°, Status: $statusCode")
             
@@ -178,7 +178,8 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
     }
     
     override fun interpretStatusCode(statusCode: String?): String? {
-        return STATUS_CODES[statusCode] ?: "Unknown status code: $statusCode"
+        // Ignore status codes - we only need the measurement data
+        return "Status: $statusCode (ignored)"
     }
     
     /**

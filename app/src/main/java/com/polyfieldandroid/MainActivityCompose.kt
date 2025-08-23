@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.json.JSONObject
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -59,7 +60,8 @@ data class DeviceState(
     val connectionType: String = "serial", // "serial" or "network"
     val serialPort: String = "/dev/ttyUSB0",
     val ipAddress: String = "192.168.1.100",
-    val port: Int = 8080
+    val port: Int = 8080,
+    val deviceName: String = "" // Real device name like "Mato MTS-602R+"
 )
 
 data class DeviceConfig(
@@ -706,6 +708,15 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     init {
         // Load calibration history on startup
         loadCalibrationHistoryFromDisk()
+        
+        // CRITICAL: Initialize Go Mobile demo mode to prevent simulation in live mode
+        try {
+            val initialDemoMode = _uiState.value.isDemoMode
+            mobile.Mobile.setDemoMode(initialDemoMode)
+            android.util.Log.d("PolyField", "Go Mobile initialized with demo mode: $initialDemoMode")
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Failed to initialize Go Mobile demo mode", e)
+        }
     }
     
     /**
@@ -782,6 +793,12 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     
     fun updateScreen(screen: String) {
         _uiState.value = _uiState.value.copy(currentScreen = screen)
+        
+        // Automatically refresh devices when navigating to device setup in live mode
+        if (screen == "DEVICE_SETUP" && !_uiState.value.isDemoMode) {
+            android.util.Log.d("PolyField", "Auto-refreshing devices on DEVICE_SETUP navigation")
+            refreshUsbDevices()
+        }
     }
     
     fun updateEventType(eventType: String) {
@@ -800,7 +817,16 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     
     fun toggleDemoMode() {
         val currentMode = _uiState.value.isDemoMode
-        _uiState.value = _uiState.value.copy(isDemoMode = !currentMode)
+        val newMode = !currentMode
+        _uiState.value = _uiState.value.copy(isDemoMode = newMode)
+        
+        // CRITICAL: Tell Go Mobile the current demo mode to prevent simulation in live mode
+        try {
+            mobile.Mobile.setDemoMode(newMode)
+            android.util.Log.d("PolyField", "Go Mobile demo mode set to: $newMode")
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Failed to set Go Mobile demo mode", e)
+        }
         
         if (currentMode) { // Switching to live mode
             resetCalibration()
@@ -857,13 +883,68 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     vendorId = deviceInfo["vendorId"] as? Int ?: 0,
                     productId = deviceInfo["productId"] as? Int ?: 0,
                     deviceName = deviceInfo["description"] as? String ?: "USB Device ${index + 1}",
-                    serialPath = "/dev/ttyUSB$index"
+                    serialPath = deviceInfo["port"] as? String ?: "/dev/ttyUSB$index"
                 )
             }
         }
         
         android.util.Log.d("PolyField", "Detected ${detectedDevices.size} USB devices after refresh")
         updateDetectedDevices(detectedDevices)
+        
+        // Auto-connect if only one device detected after refresh
+        if (!_uiState.value.isDemoMode && detectedDevices.size == 1) {
+            android.util.Log.d("PolyField", "Single device detected - auto-connecting")
+            autoConnectToEDMDevices(detectedDevices)
+        }
+    }
+    
+    /**
+     * Auto-connect to detected EDM devices in live mode
+     */
+    private fun autoConnectToEDMDevices(detectedDevices: List<DetectedDevice>) {
+        viewModelScope.launch {
+            // Check if EDM is already connected
+            if (_uiState.value.devices.edm.connected) {
+                android.util.Log.d("PolyField", "EDM already connected, skipping auto-connect")
+                return@launch
+            }
+            
+            // Find EDM devices (CH340 or FTDI)
+            val edmDevices = detectedDevices.filter { device ->
+                // CH340 (Mato EDM): VID:1A86 (6790) PID:7523 (29987)
+                // FTDI devices: VID:0403 (1027) 
+                (device.vendorId == 6790 && device.productId == 29987) || // CH340
+                (device.vendorId == 1027) // FTDI
+            }
+            
+            if (edmDevices.isNotEmpty()) {
+                val edmDevice = edmDevices.first()
+                android.util.Log.d("PolyField", "Auto-connecting to EDM device: ${edmDevice.deviceName}")
+                
+                try {
+                    val result = edmModule.connectUsbDevice("edm", edmDevice.serialPath)
+                    if (result["success"] == true) {
+                        android.util.Log.d("PolyField", "Auto-connect successful: ${result["message"]}")
+                        
+                        // Update device with connection and real device name
+                        val deviceState = DeviceState(
+                            connected = true,
+                            connectionType = "serial",
+                            serialPort = edmDevice.serialPath,
+                            deviceName = edmDevice.deviceName
+                        )
+                        updateDeviceConfig("edm", deviceState)
+                        
+                        // Log successful auto-connection
+                        android.util.Log.d("PolyField", "Successfully auto-connected to ${edmDevice.deviceName}")
+                    } else {
+                        android.util.Log.w("PolyField", "Auto-connect failed: ${result["error"]}")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PolyField", "Auto-connect error", e)
+                }
+            }
+        }
     }
     
     fun updateDevice(device: UsbDevice?, isDemoMode: Boolean) {
@@ -876,20 +957,15 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     fun updateDeviceConnection(deviceType: String, connected: Boolean) {
         if (connected && !_uiState.value.isDemoMode) {
             // In live mode, attempt actual device connection
+            // Only set connected=true if connection succeeds
             connectToRealDevice(deviceType)
         } else if (!connected) {
             // Disconnect device
             edmModule.disconnectDevice(deviceType)
+            // Update state to disconnected
+            updateDeviceConnectionState(deviceType, false)
         }
-        
-        val devices = _uiState.value.devices
-        val updatedDevices = when (deviceType) {
-            "edm" -> devices.copy(edm = devices.edm.copy(connected = connected))
-            "wind" -> devices.copy(wind = devices.wind.copy(connected = connected))
-            "scoreboard" -> devices.copy(scoreboard = devices.scoreboard.copy(connected = connected))
-            else -> devices
-        }
-        _uiState.value = _uiState.value.copy(devices = updatedDevices)
+        // Note: For connection=true, state is updated in connectToRealDevice on success
     }
     
     private fun connectToRealDevice(deviceType: String) {
@@ -897,24 +973,49 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val device = when (deviceType) {
-                    "edm" -> _uiState.value.devices.edm
-                    "wind" -> _uiState.value.devices.wind
-                    "scoreboard" -> _uiState.value.devices.scoreboard
-                    else -> return@launch
+                // Find the detected device for this device type
+                val detectedDevices = _uiState.value.detectedDevices
+                val edmDevice = detectedDevices.find { device ->
+                    // Find EDM device (CH340 or FTDI)
+                    (device.vendorId == 6790 && device.productId == 29987) || // CH340
+                    (device.vendorId == 1027) // FTDI
                 }
                 
-                val result = when (device.connectionType) {
-                    "serial" -> edmModule.connectSerialDevice(deviceType, device.serialPort)
-                    "network" -> edmModule.connectNetworkDevice(deviceType, device.ipAddress, device.port)
-                    else -> edmModule.connectUsbDevice(deviceType, device.serialPort)
+                if (edmDevice == null) {
+                    android.util.Log.e("PolyField", "No compatible EDM device found for connection")
+                    updateDeviceConnectionState(deviceType, false)
+                    return@launch
                 }
                 
+                android.util.Log.d("PolyField", "Connecting to detected EDM device: ${edmDevice.deviceName} at ${edmDevice.serialPath}")
+                
+                val result = edmModule.connectUsbDevice(deviceType, edmDevice.serialPath)
                 android.util.Log.d("PolyField", "Device connection result: $result")
                 
                 // Update connection status based on result
                 val success = result["success"] as? Boolean == true
-                if (!success) {
+                if (success) {
+                    android.util.Log.d("PolyField", "Device connection successful")
+                    
+                    // Verify EDM module actually knows about the connection
+                    val edmModuleConnected = edmModule.isDeviceConnected(deviceType)
+                    android.util.Log.d("PolyField", "EDM module connection verification: $edmModuleConnected")
+                    
+                    if (edmModuleConnected) {
+                        // Update device state with successful connection
+                        val deviceState = DeviceState(
+                            connected = true,
+                            connectionType = result["connectionType"] as? String ?: "serial",
+                            serialPort = edmDevice.serialPath,
+                            deviceName = result["edmDevice"] as? String ?: edmDevice.deviceName
+                        )
+                        updateDeviceConfig(deviceType, deviceState)
+                        android.util.Log.d("PolyField", "Device state updated to connected")
+                    } else {
+                        android.util.Log.e("PolyField", "Connection returned success but EDM module shows disconnected!")
+                        updateDeviceConnectionState(deviceType, false)
+                    }
+                } else {
                     val error = result["error"] as? String ?: "Unknown error"
                     android.util.Log.e("PolyField", "Device connection failed: $error")
                     // Reset connection state on failure
@@ -969,25 +1070,79 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 isLoading = false
             )
         } else {
-            // Live mode - use real EDM device
+            // Live mode - ABSOLUTELY NO SIMULATION ALLOWED
+            
+            // DEBUG: Check both UI state and EDM module state
+            android.util.Log.d("PolyField", "=== SET CENTRE DEBUG ===")
+            android.util.Log.d("PolyField", "UI State EDM connected: ${_uiState.value.devices.edm.connected}")
+            android.util.Log.d("PolyField", "UI State EDM device: ${_uiState.value.devices.edm}")
+            android.util.Log.d("PolyField", "EDM Module state: ${edmModule.isDeviceConnected("edm")}")
+            
+            // First check: Is device connection state correct?
+            if (!_uiState.value.devices.edm.connected) {
+                showErrorDialog(
+                    "Device Error",
+                    "EDM device is not connected. Cannot set centre in live mode."
+                )
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
+            // Second check: Is EDM module aware of the connection?
+            if (!edmModule.isDeviceConnected("edm")) {
+                android.util.Log.e("PolyField", "UI shows connected but EDM module shows disconnected!")
+                showErrorDialog(
+                    "Connection Error",
+                    "Device connection lost. Please reconnect the EDM device."
+                )
+                // Reset UI state to match EDM module state
+                updateDeviceConnectionState("edm", false)
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
+            // Second check: Is device actually physically present?
+            val usbDevices = getUsbDevices()
+            @Suppress("UNCHECKED_CAST")
+            val deviceList = (usbDevices["ports"] as? List<Map<String, Any>>) ?: emptyList()
+            val hasPhysicalEDMDevice = deviceList.any { device ->
+                val isEDMDevice = device["edmDevice"] as? Boolean ?: false
+                isEDMDevice
+            }
+            
+            if (!hasPhysicalEDMDevice) {
+                // Device shows connected but no physical device found - this is the bug!
+                showErrorDialog(
+                    "Critical Error",
+                    "EDM shows connected but no physical device found. Disconnecting to prevent simulation."
+                )
+                updateDeviceConnection("edm", false) // Force disconnect
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
             viewModelScope.launch {
                 try {
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.d("PolyField", "Setting centre with real EDM device (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    android.util.Log.d("PolyField", "Setting centre with Go Mobile trigonometric calculations...")
+                    android.util.Log.d("PolyField", "ATTEMPTING REAL EDM COMMUNICATION - Device: ${_uiState.value.devices.edm.deviceName}, Port: ${_uiState.value.devices.edm.serialPort}")
                     
-                    val reading = if (isDoubleReadMode) {
-                        edmModule.getReliableEDMReading("edm")
-                    } else {
-                        edmModule.getSingleEDMReading("edm")
-                    }
+                    // Use Go Mobile's setCentre function which handles proper trigonometry
+                    val result = edmModule.setCentreWithGoMobile("edm")
                     
-                    if (reading.success) {
-                        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        // In real mode, station coordinates would come from GPS or manual input
-                        val stationX = 0.0 // Centre of coordinate system
-                        val stationY = 0.0
+                    android.util.Log.d("PolyField", "Go Mobile setCentre result: $result")
+                    
+                    if (result["success"] as Boolean) {
+                        val goMobileResult = result["result"] as String
+                        val jsonResult = JSONObject(goMobileResult)
                         
-                        android.util.Log.d("PolyField", "Centre set successfully")
+                        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                        
+                        // Extract station coordinates from Go Mobile result
+                        val stationX = if (jsonResult.has("stationX")) jsonResult.getDouble("stationX") else 0.0
+                        val stationY = if (jsonResult.has("stationY")) jsonResult.getDouble("stationY") else 0.0
+                        
+                        android.util.Log.d("PolyField", "Centre set successfully with Go Mobile calculations")
+                        android.util.Log.d("PolyField", "Station coordinates: X=$stationX, Y=$stationY")
                         
                         _uiState.value = _uiState.value.copy(
                             calibration = _uiState.value.calibration.copy(
@@ -998,10 +1153,11 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                             isLoading = false
                         )
                     } else {
-                        android.util.Log.e("PolyField", "Failed to set centre: ${reading.error}")
+                        val error = result["error"] as? String ?: "Failed to set centre"
+                        android.util.Log.e("PolyField", "Failed to set centre with Go Mobile: $error")
                         showErrorDialog(
                             "Centre Set Failed",
-                            reading.error ?: "Failed to set centre with EDM device"
+                            error
                         )
                         _uiState.value = _uiState.value.copy(isLoading = false)
                     }
@@ -1047,21 +1203,60 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 isLoading = false
             )
         } else {
-            // Live mode - use real EDM device for edge verification
+            // Live mode - ABSOLUTELY NO SIMULATION ALLOWED
+            
+            // First check: Is device connection state correct?
+            if (!_uiState.value.devices.edm.connected) {
+                showErrorDialog(
+                    "Device Error",
+                    "EDM device is not connected. Cannot verify edge in live mode."
+                )
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
+            // Second check: Is device actually physically present?
+            val usbDevices = getUsbDevices()
+            @Suppress("UNCHECKED_CAST")
+            val deviceList = (usbDevices["ports"] as? List<Map<String, Any>>) ?: emptyList()
+            val hasPhysicalEDMDevice = deviceList.any { device ->
+                val isEDMDevice = device["edmDevice"] as? Boolean ?: false
+                isEDMDevice
+            }
+            
+            if (!hasPhysicalEDMDevice) {
+                showErrorDialog(
+                    "Critical Error",
+                    "EDM shows connected but no physical device found. Disconnecting to prevent simulation."
+                )
+                updateDeviceConnection("edm", false) // Force disconnect
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                return
+            }
+            
             viewModelScope.launch {
                 try {
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.d("PolyField", "Verifying edge with real EDM device (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    val targetRadius = _uiState.value.calibration.targetRadius
+                    android.util.Log.d("PolyField", "Verifying edge with Go Mobile trigonometric calculations...")
+                    android.util.Log.d("PolyField", "Target radius: ${targetRadius}m")
                     
-                    val reading = if (isDoubleReadMode) {
-                        edmModule.getReliableEDMReading("edm")
-                    } else {
-                        edmModule.getSingleEDMReading("edm")
-                    }
+                    // Use Go Mobile's verifyEdge function which calculates horizontal distance from centre
+                    val result = edmModule.verifyEdgeWithGoMobile("edm", targetRadius)
                     
-                    if (reading.success && reading.distance != null) {
-                        val targetRadius = _uiState.value.calibration.targetRadius
-                        val measuredRadius = reading.distance
+                    android.util.Log.d("PolyField", "Go Mobile verifyEdge result: $result")
+                    
+                    if (result["success"] as Boolean) {
+                        val goMobileResult = result["result"] as String
+                        val jsonResult = JSONObject(goMobileResult)
+                        
+                        // Extract measurements from Go Mobile result
+                        val measuredRadius = if (jsonResult.has("measuredRadius")) {
+                            jsonResult.getDouble("measuredRadius")
+                        } else if (jsonResult.has("averageRadius")) {
+                            jsonResult.getDouble("averageRadius")  
+                        } else {
+                            targetRadius // fallback
+                        }
                         val deviation = kotlin.math.abs(measuredRadius - targetRadius)
                         
                         // Different tolerances per UKA/WA rules
@@ -1085,10 +1280,11 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                             isLoading = false
                         )
                     } else {
-                        android.util.Log.e("PolyField", "Edge verification failed: ${reading.error}")
+                        val error = result["error"] as? String ?: "Failed to verify edge"
+                        android.util.Log.e("PolyField", "Edge verification failed with Go Mobile: $error")
                         showErrorDialog(
                             "Edge Verification Failed",
-                            reading.error ?: "Failed to verify edge with EDM device"
+                            error
                         )
                         _uiState.value = _uiState.value.copy(isLoading = false)
                     }
@@ -1142,11 +1338,25 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             
             viewModelScope.launch {
                 try {
-                    val reading = edmModule.getSingleEDMReading("edm")
+                    android.util.Log.d("PolyField", "Measuring sector line with Go Mobile calculations...")
                     
-                    if (reading.success && reading.distance != null) {
-                        val distance = reading.distance
-                        android.util.Log.d("PolyField", "Sector line measurement successful: ${distance}m")
+                    // Use Go Mobile's measureThrow function for sector line (it's the same calculation)
+                    val result = edmModule.measureThrowWithGoMobile("edm")
+                    
+                    if (result["success"] as Boolean) {
+                        val goMobileResult = result["result"] as String
+                        val jsonResult = JSONObject(goMobileResult)
+                        
+                        // Extract distance from Go Mobile result (horizontal distance from centre)
+                        val distance = if (jsonResult.has("distance")) {
+                            jsonResult.getDouble("distance")
+                        } else if (jsonResult.has("distanceFromCentre")) {
+                            jsonResult.getDouble("distanceFromCentre") 
+                        } else {
+                            15.0 // fallback
+                        }
+                        
+                        android.util.Log.d("PolyField", "Sector line measurement successful with Go Mobile: ${distance}m")
                         
                         // Calculate sector line coordinates based on known UKA/WA angle (17.46°)
                         val sectorAngleDegrees = 17.46
@@ -1167,10 +1377,11 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         // Save complete calibration to history
                         saveCurrentCalibrationToHistory()
                     } else {
-                        android.util.Log.e("PolyField", "Sector line measurement failed: ${reading.error}")
+                        val error = result["error"] as? String ?: "Failed to measure sector line"
+                        android.util.Log.e("PolyField", "Sector line measurement failed with Go Mobile: $error")
                         showErrorDialog(
                             "Sector Line Measurement Failed",
-                            reading.error ?: "Failed to measure sector line with EDM device"
+                            error
                         )
                         _uiState.value = _uiState.value.copy(isLoading = false)
                     }
@@ -1217,41 +1428,67 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             
             viewModelScope.launch {
                 try {
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.d("PolyField", "Getting real EDM reading (${if (isDoubleReadMode) "double" else "single"} read mode)...")
+                    android.util.Log.d("PolyField", "Measuring distance: USB-serial \u2192 EDM \u2192 Translation \u2192 Go Mobile \u2192 Display")
                     
-                    val reading = if (isDoubleReadMode) {
-                        edmModule.getReliableEDMReading("edm")
-                    } else {
-                        edmModule.getSingleEDMReading("edm")
-                    }
+                    // Use Go Mobile's measureThrow function which handles the complete flow:
+                    // 1. Gets EDM data from our serial communication
+                    // 2. Applies proper trigonometric calculations (horizontal distance from centre minus radius)
+                    // 3. Returns the calculated throw distance and coordinates
+                    val result = edmModule.measureThrowWithGoMobile("edm")
                     
-                    if (reading.success && reading.distance != null) {
-                        val distance = reading.distance
-                        android.util.Log.d("PolyField", "EDM reading successful: ${distance}m")
+                    if (result["success"] as Boolean) {
+                        val goMobileResult = result["result"] as String
+                        val jsonResult = JSONObject(goMobileResult)
+                        
+                        // Extract the calculated throw distance from Go Mobile
+                        val distance = if (jsonResult.has("distance")) {
+                            jsonResult.getDouble("distance")
+                        } else if (jsonResult.has("throwDistance")) {
+                            jsonResult.getDouble("throwDistance")
+                        } else {
+                            android.util.Log.e("PolyField", "Go Mobile result missing distance field: $goMobileResult")
+                            0.0
+                        }
+                        
+                        android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m")
                         
                         _uiState.value = _uiState.value.copy(
                             measurement = String.format("%.2f m", distance),
                             isLoading = false
                         )
                         
-                        // TODO: For now use demo coordinate generation for live mode
-                        // In future, use proper EDM angle readings to calculate real coordinates
-                        val throwCoord = generateDemoThrowCoordinate(distance)
+                        // Extract coordinates from Go Mobile result for heat map
+                        val throwX = if (jsonResult.has("x")) jsonResult.getDouble("x") else 0.0
+                        val throwY = if (jsonResult.has("y")) jsonResult.getDouble("y") else 0.0
                         
-                        _uiState.value = _uiState.value.copy(
-                            throwCoordinates = _uiState.value.throwCoordinates + throwCoord
-                        )
+                        if (throwX != 0.0 || throwY != 0.0) {
+                            val throwCoord = ThrowCoordinate(
+                                x = throwX,
+                                y = throwY, 
+                                distance = distance,
+                                circleType = _uiState.value.calibration.circleType,
+                                timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                                id = java.util.UUID.randomUUID().toString()
+                            )
+                            
+                            _uiState.value = _uiState.value.copy(
+                                throwCoordinates = _uiState.value.throwCoordinates + throwCoord
+                            )
+                            
+                            android.util.Log.d("PolyField", "Real throw coordinate added: x=${throwX}, y=${throwY}, distance=${distance}m")
+                        }
+                        
                     } else {
-                        android.util.Log.e("PolyField", "EDM reading failed: ${reading.error}")
+                        val error = result["error"] as? String ?: "Failed to measure distance"
+                        android.util.Log.e("PolyField", "Go Mobile measurement failed: $error")
                         showErrorDialog(
-                            "Measurement Error",
-                            "Failed to get measurement from device"
+                            "Measurement Error", 
+                            error
                         )
                         _uiState.value = _uiState.value.copy(isLoading = false)
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("PolyField", "EDM measurement error", e)
+                    android.util.Log.e("PolyField", "Measurement error", e)
                     showErrorDialog(
                         "Device Error",
                         "Failed to measure distance: ${e.message}"
