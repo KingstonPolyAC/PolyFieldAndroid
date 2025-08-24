@@ -43,10 +43,12 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
     }
     
     override fun parseResponse(rawResponse: String): EDMParsedReading {
-        Log.d(TAG, "Parsing Mato response: '$rawResponse'")
+        Log.d(TAG, "📥 Parsing Mato MTS602R+ response: '$rawResponse'")
+        Log.d(TAG, "📏 Raw response length: ${rawResponse.length}")
         
         try {
             val trimmed = rawResponse.trim()
+            Log.d(TAG, "📏 Trimmed response: '$trimmed' (length: ${trimmed.length})")
             
             // Validate response format
             if (trimmed.length < MIN_RESPONSE_LENGTH) {
@@ -61,6 +63,8 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             
             // Split response into parts
             val parts = trimmed.split("\\s+".toRegex())
+            Log.d(TAG, "📊 Response parts: ${parts.joinToString(", ") { "'$it'" }}")
+            Log.d(TAG, "📊 Expected format: 'DDDDDDD DDDDDDD DDDDDDD DD' (slope_mm vertical_angle horizontal_angle status)")
             
             if (parts.size != EXPECTED_PARTS) {
                 return EDMParsedReading(
@@ -73,9 +77,13 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             }
             
             // Parse slope distance (in mm)
+            Log.d(TAG, "🔄 Parsing slope distance: '${parts[0]}'")
             val slopeDistanceMm = try {
-                parts[0].toDouble()
+                val distance = parts[0].toDouble()
+                Log.d(TAG, "✅ Slope distance: ${distance}mm (${distance/1000.0}m)")
+                distance
             } catch (e: NumberFormatException) {
+                Log.e(TAG, "❌ Failed to parse slope distance: '${parts[0]}'")
                 return EDMParsedReading(
                     slopeDistanceMm = 0.0,
                     verticalAngleDegrees = 0.0,
@@ -86,9 +94,13 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             }
             
             // Parse vertical angle (DDDMMSS format)
+            Log.d(TAG, "🔄 Parsing vertical angle: '${parts[1]}'")
             val verticalAngleDegrees = try {
-                parseDDDMMSSAngle(parts[1])
+                val angle = parseDDDMMSSAngle(parts[1])
+                Log.d(TAG, "✅ Vertical angle: ${angle}° (from '${parts[1]}')")
+                angle
             } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to parse vertical angle: '${parts[1]}' - ${e.message}")
                 return EDMParsedReading(
                     slopeDistanceMm = 0.0,
                     verticalAngleDegrees = 0.0,
@@ -99,9 +111,13 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             }
             
             // Parse horizontal angle (DDDMMSS format)  
+            Log.d(TAG, "🔄 Parsing horizontal angle: '${parts[2]}'")
             val horizontalAngleDegrees = try {
-                parseDDDMMSSAngle(parts[2])
+                val angle = parseDDDMMSSAngle(parts[2])
+                Log.d(TAG, "✅ Horizontal angle: ${angle}° (from '${parts[2]}')")
+                angle
             } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to parse horizontal angle: '${parts[2]}' - ${e.message}")
                 return EDMParsedReading(
                     slopeDistanceMm = 0.0,
                     verticalAngleDegrees = 0.0,
@@ -113,12 +129,17 @@ class MatoMTS602RTranslator(deviceSpec: EDMDeviceSpec) : EDMDeviceTranslator(dev
             
             // Parse status code
             val statusCode = parts[3]
+            Log.d(TAG, "🔄 Parsing status code: '$statusCode'")
             val statusMessage = interpretStatusCode(statusCode)
             
             // Accept all status codes since we ignore status validation
             val isValidMeasurement = true // Accept all measurements regardless of status
             
-            Log.d(TAG, "Parsed Mato reading - SD: ${slopeDistanceMm}mm, VA: ${verticalAngleDegrees}°, HA: ${horizontalAngleDegrees}°, Status: $statusCode")
+            Log.d(TAG, "✅ SUCCESSFULLY PARSED Mato MTS602R+ reading:")
+            Log.d(TAG, "   📏 Slope Distance: ${slopeDistanceMm}mm (${slopeDistanceMm/1000.0}m)")
+            Log.d(TAG, "   📐 Vertical Angle: ${verticalAngleDegrees}°") 
+            Log.d(TAG, "   🧭 Horizontal Angle: ${horizontalAngleDegrees}°")
+            Log.d(TAG, "   ⚡ Status: $statusCode ($statusMessage)")
             
             return EDMParsedReading(
                 slopeDistanceMm = slopeDistanceMm,

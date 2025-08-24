@@ -19,6 +19,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -41,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.DrawStyle
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.*
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -122,11 +126,25 @@ data class EdgeResult(
 
 // Settings data class
 data class AppSettings(
-    val isDoubleReadMode: Boolean = true,
+    val isDoubleReadMode: Boolean = false,
     val selectedEDMDevice: EDMDeviceSpec = EDMDeviceRegistry.getDefaultDevice(),
     val serverIpAddress: String = "192.168.0.90",
     val serverPort: Int = 8080
 )
+
+// DEBUG: Serial Communication Log Entry (REMOVE WHEN DEBUG COMPLETE)
+data class SerialCommLogEntry(
+    val timestamp: Long = System.currentTimeMillis(),
+    val direction: String, // "OUT" or "IN"
+    val data: String,
+    val dataHex: String = "",
+    val success: Boolean = true,
+    val error: String? = null
+) {
+    fun getFormattedTime(): String {
+        return java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
+    }
+}
 
 // Heat Map Data Classes
 data class ThrowCoordinate(
@@ -526,8 +544,9 @@ fun HeatMapVisualization(
                 style = androidx.compose.ui.graphics.drawscope.Fill
             )
         } else {
-            // Use standard UKA/WA sector angle (34.92° total sector)
-            val sectorAngleDegrees = 34.92f / 2f // Half angle for each side (17.46°)
+            // Use UKA/WA sector angles: Shot/Discus/Hammer = 34.92° total, Javelin = 28.96° total
+            // TODO: This should be parameterized based on event type
+            val sectorAngleDegrees = 34.92f / 2f // Half angle for each side (17.46°) - default for Shot/Discus/Hammer
             val sectorAngleRadians = Math.toRadians(sectorAngleDegrees.toDouble()).toFloat()
             
             // Left sector line - extended beyond furthest throw
@@ -692,7 +711,10 @@ data class AppState(
     val detectedDevices: List<DetectedDevice> = emptyList(),
     val errorMessage: String? = null,
     val errorTitle: String? = null,
-    val settings: AppSettings = AppSettings()
+    val settings: AppSettings = AppSettings(),
+    // DEBUG: Serial Communication Log (REMOVE WHEN DEBUG COMPLETE)
+    val serialCommLog: List<SerialCommLogEntry> = emptyList(),
+    val debugCommStreamVisible: Boolean = false
 )
 
 class AppViewModel(private val context: android.content.Context) : androidx.lifecycle.ViewModel() {
@@ -716,6 +738,18 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             android.util.Log.d("PolyField", "Go Mobile initialized with demo mode: $initialDemoMode")
         } catch (e: Exception) {
             android.util.Log.e("PolyField", "Failed to initialize Go Mobile demo mode", e)
+        }
+        
+        // DEBUG: Setup serial communication logging (REMOVE WHEN DEBUG COMPLETE)
+        edmModule.setDebugLogger { direction, data, dataHex, success, error ->
+            val entry = SerialCommLogEntry(
+                direction = direction,
+                data = data,
+                dataHex = dataHex,
+                success = success,
+                error = error
+            )
+            addSerialCommLog(entry)
         }
     }
     
@@ -844,6 +878,21 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         android.util.Log.d("PolyField", "Updated EDM device to: ${settings.selectedEDMDevice.displayName}")
     }
     
+    // DEBUG: Serial Communication Logging Functions (REMOVE WHEN DEBUG COMPLETE)
+    fun addSerialCommLog(entry: SerialCommLogEntry) {
+        val currentLog = _uiState.value.serialCommLog
+        val updatedLog = (currentLog + entry).takeLast(100) // Keep last 100 entries
+        _uiState.value = _uiState.value.copy(serialCommLog = updatedLog)
+    }
+    
+    fun toggleDebugCommStream() {
+        updateScreen("DEBUG_SERIAL_COMM")
+    }
+    
+    fun clearSerialCommLog() {
+        _uiState.value = _uiState.value.copy(serialCommLog = emptyList())
+    }
+    
     fun updateDetectedDevices(devices: List<DetectedDevice>) {
         _uiState.value = _uiState.value.copy(detectedDevices = devices)
     }
@@ -926,6 +975,14 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     if (result["success"] == true) {
                         android.util.Log.d("PolyField", "Auto-connect successful: ${result["message"]}")
                         
+                        // Register device with Go Mobile for EDM operations
+                        try {
+                            val goMobileResult = mobile.Mobile.registerUSBDevice("edm", edmDevice.deviceName)
+                            android.util.Log.d("PolyField", "Go Mobile device registration: $goMobileResult")
+                        } catch (e: Exception) {
+                            android.util.Log.w("PolyField", "Go Mobile registration failed but proceeding: ${e.message}")
+                        }
+                        
                         // Update device with connection and real device name
                         val deviceState = DeviceState(
                             connected = true,
@@ -997,24 +1054,26 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 if (success) {
                     android.util.Log.d("PolyField", "Device connection successful")
                     
-                    // Verify EDM module actually knows about the connection
-                    val edmModuleConnected = edmModule.isDeviceConnected(deviceType)
-                    android.util.Log.d("PolyField", "EDM module connection verification: $edmModuleConnected")
-                    
-                    if (edmModuleConnected) {
-                        // Update device state with successful connection
-                        val deviceState = DeviceState(
-                            connected = true,
-                            connectionType = result["connectionType"] as? String ?: "serial",
-                            serialPort = edmDevice.serialPath,
-                            deviceName = result["edmDevice"] as? String ?: edmDevice.deviceName
-                        )
-                        updateDeviceConfig(deviceType, deviceState)
-                        android.util.Log.d("PolyField", "Device state updated to connected")
-                    } else {
-                        android.util.Log.e("PolyField", "Connection returned success but EDM module shows disconnected!")
-                        updateDeviceConnectionState(deviceType, false)
+                    // Register device with Go Mobile for EDM operations
+                    if (deviceType == "edm") {
+                        try {
+                            val deviceName = result["edmDevice"] as? String ?: edmDevice.deviceName
+                            val goMobileResult = mobile.Mobile.registerUSBDevice(deviceType, deviceName)
+                            android.util.Log.d("PolyField", "Go Mobile device registration: $goMobileResult")
+                        } catch (e: Exception) {
+                            android.util.Log.w("PolyField", "Go Mobile registration failed but proceeding: ${e.message}")
+                        }
                     }
+                    
+                    // Update device state with successful connection
+                    val deviceState = DeviceState(
+                        connected = true,
+                        connectionType = result["connectionType"] as? String ?: "serial",
+                        serialPort = edmDevice.serialPath,
+                        deviceName = result["edmDevice"] as? String ?: edmDevice.deviceName
+                    )
+                    updateDeviceConfig(deviceType, deviceState)
+                    android.util.Log.d("PolyField", "Device state updated to connected")
                 } else {
                     val error = result["error"] as? String ?: "Unknown error"
                     android.util.Log.e("PolyField", "Device connection failed: $error")
@@ -1072,11 +1131,10 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         } else {
             // Live mode - ABSOLUTELY NO SIMULATION ALLOWED
             
-            // DEBUG: Check both UI state and EDM module state
+            // DEBUG: Check UI connection state
             android.util.Log.d("PolyField", "=== SET CENTRE DEBUG ===")
             android.util.Log.d("PolyField", "UI State EDM connected: ${_uiState.value.devices.edm.connected}")
             android.util.Log.d("PolyField", "UI State EDM device: ${_uiState.value.devices.edm}")
-            android.util.Log.d("PolyField", "EDM Module state: ${edmModule.isDeviceConnected("edm")}")
             
             // First check: Is device connection state correct?
             if (!_uiState.value.devices.edm.connected) {
@@ -1088,18 +1146,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 return
             }
             
-            // Second check: Is EDM module aware of the connection?
-            if (!edmModule.isDeviceConnected("edm")) {
-                android.util.Log.e("PolyField", "UI shows connected but EDM module shows disconnected!")
-                showErrorDialog(
-                    "Connection Error",
-                    "Device connection lost. Please reconnect the EDM device."
-                )
-                // Reset UI state to match EDM module state
-                updateDeviceConnectionState("edm", false)
-                _uiState.value = _uiState.value.copy(isLoading = false)
-                return
-            }
+            // Device is connected in UI and responding - proceed with measurement
             
             // Second check: Is device actually physically present?
             val usbDevices = getUsbDevices()
@@ -1123,13 +1170,16 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             
             viewModelScope.launch {
                 try {
-                    android.util.Log.d("PolyField", "Setting centre with Go Mobile trigonometric calculations...")
-                    android.util.Log.d("PolyField", "ATTEMPTING REAL EDM COMMUNICATION - Device: ${_uiState.value.devices.edm.deviceName}, Port: ${_uiState.value.devices.edm.serialPort}")
+                    android.util.Log.e("PolyField", "🔵 STARTING Set Centre with Go Mobile...")
+                    android.util.Log.e("PolyField", "🔵 EDM Device: ${_uiState.value.devices.edm.deviceName}, Port: ${_uiState.value.devices.edm.serialPort}")
                     
                     // Use Go Mobile's setCentre function which handles proper trigonometry
-                    val result = edmModule.setCentreWithGoMobile("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    android.util.Log.e("PolyField", "🔵 Calling setCentreWithGoMobile with doubleRead: $isDoubleReadMode")
                     
-                    android.util.Log.d("PolyField", "Go Mobile setCentre result: $result")
+                    val result = edmModule.setCentreWithGoMobile("edm", _uiState.value.calibration.targetRadius, _uiState.value.calibration.circleType, isDoubleReadMode)
+                    
+                    android.util.Log.e("PolyField", "🔵 Go Mobile setCentre result: $result")
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
@@ -1137,12 +1187,23 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         
                         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
                         
-                        // Extract station coordinates from Go Mobile result
-                        val stationX = if (jsonResult.has("stationX")) jsonResult.getDouble("stationX") else 0.0
-                        val stationY = if (jsonResult.has("stationY")) jsonResult.getDouble("stationY") else 0.0
+                        // CRITICAL: In live mode, ONLY use real coordinates from Go Mobile - NO fallbacks or simulation
+                        if (!jsonResult.has("stationX") || !jsonResult.has("stationY")) {
+                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile setCentre missing station coordinates - REFUSING to use simulation in live mode")
+                            showErrorDialog(
+                                "Centre Set Failed",
+                                "Go Mobile did not return station coordinates. Cannot proceed without real EDM data."
+                            )
+                            _uiState.value = _uiState.value.copy(isLoading = false)
+                            return@launch
+                        }
                         
-                        android.util.Log.d("PolyField", "Centre set successfully with Go Mobile calculations")
-                        android.util.Log.d("PolyField", "Station coordinates: X=$stationX, Y=$stationY")
+                        // Extract REAL station coordinates from Go Mobile result (no fallbacks allowed)
+                        val stationX = jsonResult.getDouble("stationX")
+                        val stationY = jsonResult.getDouble("stationY")
+                        
+                        android.util.Log.d("PolyField", "Centre set successfully with REAL Go Mobile calculations")
+                        android.util.Log.d("PolyField", "REAL station coordinates from EDM: X=$stationX, Y=$stationY")
                         
                         _uiState.value = _uiState.value.copy(
                             calibration = _uiState.value.calibration.copy(
@@ -1241,7 +1302,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     android.util.Log.d("PolyField", "Target radius: ${targetRadius}m")
                     
                     // Use Go Mobile's verifyEdge function which calculates horizontal distance from centre
-                    val result = edmModule.verifyEdgeWithGoMobile("edm", targetRadius)
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    val result = edmModule.verifyEdgeWithGoMobile("edm", targetRadius, isDoubleReadMode)
                     
                     android.util.Log.d("PolyField", "Go Mobile verifyEdge result: $result")
                     
@@ -1249,13 +1311,19 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         val goMobileResult = result["result"] as String
                         val jsonResult = JSONObject(goMobileResult)
                         
-                        // Extract measurements from Go Mobile result
+                        // CRITICAL: In live mode, ONLY use real measurements from Go Mobile - NO fallbacks or simulation
                         val measuredRadius = if (jsonResult.has("measuredRadius")) {
                             jsonResult.getDouble("measuredRadius")
                         } else if (jsonResult.has("averageRadius")) {
                             jsonResult.getDouble("averageRadius")  
                         } else {
-                            targetRadius // fallback
+                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile verifyEdge missing radius measurement - REFUSING to use simulation in live mode")
+                            showErrorDialog(
+                                "Edge Verification Failed",
+                                "Go Mobile did not return measured radius. Cannot proceed without real EDM measurement."
+                            )
+                            _uiState.value = _uiState.value.copy(isLoading = false)
+                            return@launch
                         }
                         val deviation = kotlin.math.abs(measuredRadius - targetRadius)
                         
@@ -1305,8 +1373,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         
         if (_uiState.value.isDemoMode) {
             // Demo mode - simulate sector line measurement
-            // Sector lines are at 17.46° from centre for shot put/discus/hammer
-            val sectorAngleDegrees = 17.46
+            // Sector angles: Shot/Discus/Hammer = 17.46° each side, Javelin = 14.48° each side
+            val sectorAngleDegrees = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 14.48 else 17.46
             val distanceFromCentre = 15.0 + kotlin.random.Random.nextDouble() * 10.0 // 15-25m from centre
             
             val sectorLineCoordinates = Pair(
@@ -1347,19 +1415,26 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         val goMobileResult = result["result"] as String
                         val jsonResult = JSONObject(goMobileResult)
                         
-                        // Extract distance from Go Mobile result (horizontal distance from centre)
+                        // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
                         val distance = if (jsonResult.has("distance")) {
                             jsonResult.getDouble("distance")
                         } else if (jsonResult.has("distanceFromCentre")) {
                             jsonResult.getDouble("distanceFromCentre") 
                         } else {
-                            15.0 // fallback
+                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile measureThrow missing distance measurement - REFUSING to use simulation in live mode")
+                            showErrorDialog(
+                                "Sector Line Measurement Failed",
+                                "Go Mobile did not return distance measurement. Cannot proceed without real EDM data."
+                            )
+                            _uiState.value = _uiState.value.copy(isLoading = false)
+                            return@launch
                         }
                         
                         android.util.Log.d("PolyField", "Sector line measurement successful with Go Mobile: ${distance}m")
                         
-                        // Calculate sector line coordinates based on known UKA/WA angle (17.46°)
-                        val sectorAngleDegrees = 17.46
+                        // Calculate sector line coordinates based on UKA/WA angles
+                        // Shot/Discus/Hammer: 34.92° total (17.46° each side), Javelin: 28.96° total (14.48° each side)
+                        val sectorAngleDegrees = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 14.48 else 17.46
                         val sectorLineCoordinates = Pair(
                             distance * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
                             distance * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
@@ -1434,20 +1509,27 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     // 1. Gets EDM data from our serial communication
                     // 2. Applies proper trigonometric calculations (horizontal distance from centre minus radius)
                     // 3. Returns the calculated throw distance and coordinates
-                    val result = edmModule.measureThrowWithGoMobile("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    val result = edmModule.measureThrowWithGoMobile("edm", isDoubleReadMode)
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
                         val jsonResult = JSONObject(goMobileResult)
                         
-                        // Extract the calculated throw distance from Go Mobile
+                        // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
                         val distance = if (jsonResult.has("distance")) {
                             jsonResult.getDouble("distance")
                         } else if (jsonResult.has("throwDistance")) {
                             jsonResult.getDouble("throwDistance")
                         } else {
-                            android.util.Log.e("PolyField", "Go Mobile result missing distance field: $goMobileResult")
-                            0.0
+                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile measureThrow missing distance field - REFUSING to use simulation in live mode")
+                            android.util.Log.e("PolyField", "Go Mobile result: $goMobileResult")
+                            showErrorDialog(
+                                "Measurement Error",
+                                "Go Mobile did not return distance measurement. Cannot proceed without real EDM data."
+                            )
+                            _uiState.value = _uiState.value.copy(isLoading = false)
+                            return@launch
                         }
                         
                         android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m")
@@ -1458,10 +1540,10 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         )
                         
                         // Extract coordinates from Go Mobile result for heat map
-                        val throwX = if (jsonResult.has("x")) jsonResult.getDouble("x") else 0.0
-                        val throwY = if (jsonResult.has("y")) jsonResult.getDouble("y") else 0.0
-                        
-                        if (throwX != 0.0 || throwY != 0.0) {
+                        // CRITICAL: Only add coordinates if Go Mobile provides them - NO simulation fallbacks
+                        if (jsonResult.has("x") && jsonResult.has("y")) {
+                            val throwX = jsonResult.getDouble("x")
+                            val throwY = jsonResult.getDouble("y")
                             val throwCoord = ThrowCoordinate(
                                 x = throwX,
                                 y = throwY, 
@@ -1738,8 +1820,10 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
     }
     
     private fun generateDemoThrowCoordinate(distance: Double): ThrowCoordinate {
-        // Generate throw within UKA/WA sector lines (34.92° total sector, 17.46° each side)
-        val maxSectorAngle = Math.toRadians(17.46) // Half sector angle in radians
+        // Generate throw within UKA/WA sector lines
+        // Shot/Discus/Hammer: 34.92° total (17.46° each side), Javelin: 28.96° total (14.48° each side)
+        val halfSectorAngleDegrees = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 14.48 else 17.46
+        val maxSectorAngle = Math.toRadians(halfSectorAngleDegrees) // Half sector angle in radians
         
         // Random angle within the sector (can be negative for left side)
         val throwAngle = kotlin.random.Random.nextDouble() * 2 * maxSectorAngle - maxSectorAngle
@@ -1776,7 +1860,8 @@ fun SettingsScreen(
     onDoubleReadModeToggle: (Boolean) -> Unit,
     onEDMDeviceChange: (EDMDeviceSpec) -> Unit,
     onServerSettingsChange: (String, Int) -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onDebugCommToggle: () -> Unit = {} // DEBUG: Add debug comm toggle (REMOVE WHEN DEBUG COMPLETE)
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
@@ -2026,6 +2111,43 @@ fun SettingsScreen(
                             fontSize = 12.sp,
                             color = Color(0xFF666666),
                             modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
+            
+            // DEBUG: Serial Communication Debug Button (REMOVE WHEN DEBUG COMPLETE)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "🔧 DEBUG: Serial Communication Monitor",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF856404),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "Monitor real-time serial communication with EDM device",
+                        fontSize = 12.sp,
+                        color = Color(0xFF856404),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Button(
+                        onClick = onDebugCommToggle,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107))
+                    ) {
+                        Text(
+                            text = "Open Communication Monitor",
+                            color = Color(0xFF212529)
                         )
                     }
                 }
@@ -2389,8 +2511,16 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                     },
                     onToggleDeviceSetupModal = { deviceType -> viewModel.toggleDeviceSetupModal(deviceType) },
                     onContinue = {
-                        val nextScreen = if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE" else "MEASUREMENT"
-                        viewModel.updateScreen(nextScreen)
+                        // Validate device connection for live mode
+                        if (!uiState.isDemoMode && uiState.eventType == "Throws" && !uiState.devices.edm.connected) {
+                            viewModel.showErrorDialog(
+                                "Device Required",
+                                "EDM device must be connected to proceed in live mode. Please connect your EDM device or switch to demo mode."
+                            )
+                        } else {
+                            val nextScreen = if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE" else "MEASUREMENT"
+                            viewModel.updateScreen(nextScreen)
+                        }
                     }
                 )
                 "CALIBRATION_SELECT_CIRCLE" -> CalibrationSelectCircleScreenExact(
@@ -2419,7 +2549,7 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                     isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onVerifyEdge = { viewModel.verifyEdge() },
                     onResetEdge = { 
-                        viewModel.resetEdgeVerification()
+                        viewModel.verifyEdge()  // Changed: Remeasure button now triggers new reading instead of just resetting
                     }
                 )
                 "CALIBRATION_SECTOR_LINE" -> CalibrationSectorLineScreen(
@@ -2465,8 +2595,23 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                     },
                     onBackClick = {
                         viewModel.updateScreen("SELECT_EVENT_TYPE")
+                    },
+                    onDebugCommToggle = { // DEBUG: Add debug comm toggle (REMOVE WHEN DEBUG COMPLETE)
+                        viewModel.toggleDebugCommStream()
                     }
                 )
+                
+                // DEBUG: Serial Communication Monitor Screen (REMOVE WHEN DEBUG COMPLETE)
+                "DEBUG_SERIAL_COMM" -> DebugSerialCommScreen(
+                    serialCommLog = uiState.serialCommLog,
+                    onBackClick = {
+                        viewModel.updateScreen("SETTINGS")
+                    },
+                    onClearLog = {
+                        viewModel.clearSerialCommLog()
+                    }
+                )
+                
                 "HEAT_MAP" -> HeatMapScreen(
                     calibration = uiState.calibration,
                     throwCoordinates = uiState.throwCoordinates,
@@ -2568,6 +2713,158 @@ private fun canGoForward(screen: String): Boolean {
 
 private fun showBottomNavigation(screen: String): Boolean {
     return screen != "SELECT_EVENT_TYPE" && screen != "SETTINGS" // Hide on initial screen and settings
+}
+
+// DEBUG: Serial Communication Monitor Screen (REMOVE WHEN DEBUG COMPLETE)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DebugSerialCommScreen(
+    serialCommLog: List<SerialCommLogEntry>,
+    onBackClick: () -> Unit,
+    onClearLog: () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp
+    val listState = rememberLazyListState()
+    
+    // Auto-scroll to bottom when new entries are added
+    LaunchedEffect(serialCommLog.size) {
+        if (serialCommLog.isNotEmpty()) {
+            listState.animateScrollToItem(serialCommLog.size - 1)
+        }
+    }
+    
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // Header
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1976D2))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🔧 Serial Communication Monitor",
+                    fontSize = maxOf(20f, screenWidth * 0.025f).sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                
+                Row {
+                    Button(
+                        onClick = onClearLog,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107)),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Text("Clear", color = Color(0xFF212529))
+                    }
+                    
+                    Button(
+                        onClick = onBackClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+                    ) {
+                        Text("← Back", color = Color(0xFF1976D2))
+                    }
+                }
+            }
+        }
+        
+        // Communication log
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (serialCommLog.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+                    ) {
+                        Text(
+                            text = "No communication logged yet.\nTry using 'Set Centre' to trigger EDM communication.",
+                            modifier = Modifier.padding(16.dp),
+                            color = Color(0xFF666666),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+            
+            items(serialCommLog) { entry ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (entry.direction == "OUT") Color(0xFFE3F2FD) else Color(0xFFF3E5F5)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "${entry.direction} ${entry.getFormattedTime()}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (entry.direction == "OUT") Color(0xFF1565C0) else Color(0xFF7B1FA2)
+                            )
+                            
+                            if (!entry.success && entry.error != null) {
+                                Text(
+                                    text = "ERROR",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD32F2F),
+                                    modifier = Modifier
+                                        .background(Color(0xFFFFEBEE), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        Text(
+                            text = "DATA: '${entry.data}'",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF212529)
+                        )
+                        
+                        if (entry.dataHex.isNotEmpty()) {
+                            Text(
+                                text = "HEX:  ${entry.dataHex}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                        
+                        if (!entry.success && entry.error != null) {
+                            Text(
+                                text = "ERROR: ${entry.error}",
+                                fontSize = 10.sp,
+                                color = Color(0xFFD32F2F),
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {

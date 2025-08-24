@@ -1000,7 +1000,7 @@ public class MainActivity extends Activity {
                     result = "Circle edge verified within tolerance (DEMO)";
                     break;
                 case "Measure Throw":
-                    result = mobile.Mobile.measureThrow("edm");
+                    result = mobile.Mobile.measureThrowOld("edm");
                     updateCoordinates();
                     break;
                 case "Measure Wind":

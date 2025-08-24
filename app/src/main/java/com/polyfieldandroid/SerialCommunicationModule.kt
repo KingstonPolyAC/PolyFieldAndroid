@@ -26,6 +26,9 @@ class SerialCommunicationModule(private val context: Context) {
         private const val CONNECTION_TIMEOUT_MS = 5000 // 5 seconds for connection
     }
     
+    // DEBUG: Serial Communication Logging (REMOVE WHEN DEBUG COMPLETE)
+    var debugLogger: ((String, String, String, Boolean, String?) -> Unit)? = null
+    
     data class SerialResponse(
         val success: Boolean,
         val data: String? = null,
@@ -109,9 +112,18 @@ class SerialCommunicationModule(private val context: Context) {
         expectedResponseLength: Int = 0,
         timeoutMs: Long = READ_TIMEOUT_MS.toLong()
     ): SerialResponse {
+        return sendEDMCommandBytes(port, command.toByteArray(Charsets.UTF_8), expectedResponseLength, timeoutMs)
+    }
+    
+    suspend fun sendEDMCommandBytes(
+        port: UsbSerialPort,
+        commandBytes: ByteArray,
+        expectedResponseLength: Int = 0,
+        timeoutMs: Long = READ_TIMEOUT_MS.toLong()
+    ): SerialResponse {
         return withContext(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Sending EDM command: '$command'")
+                Log.d(TAG, "Sending EDM command bytes: ${commandBytes.contentToString()}")
                 
                 // Clear any existing data in buffer
                 val buffer = ByteArray(1024)
@@ -124,7 +136,6 @@ class SerialCommunicationModule(private val context: Context) {
                 }
                 
                 // Send command
-                val commandBytes = command.toByteArray()
                 val bytesWritten = withTimeout(WRITE_TIMEOUT_MS.toLong()) {
                     port.write(commandBytes, WRITE_TIMEOUT_MS)
                     commandBytes.size // Return the expected number of bytes
@@ -140,6 +151,15 @@ class SerialCommunicationModule(private val context: Context) {
                 
                 Log.d(TAG, "Command sent successfully ($bytesWritten bytes)")
                 
+                // DEBUG: Log outgoing command (REMOVE WHEN DEBUG COMPLETE)
+                debugLogger?.invoke(
+                    "OUT",
+                    String(commandBytes, Charsets.UTF_8),
+                    commandBytes.joinToString(" ") { "%02x".format(it) },
+                    true,
+                    null
+                )
+                
                 // Wait for response
                 val response = StringBuilder()
                 val readBuffer = ByteArray(1024)
@@ -151,16 +171,29 @@ class SerialCommunicationModule(private val context: Context) {
                         if (bytesRead > 0) {
                             val chunk = String(readBuffer, 0, bytesRead)
                             response.append(chunk)
-                            Log.d(TAG, "Received chunk: '$chunk' (${bytesRead} bytes)")
+                            Log.d(TAG, "📥 RAW CHUNK: '$chunk' (${bytesRead} bytes) [HEX: ${readBuffer.take(bytesRead).joinToString(" ") { "%02x".format(it) }}]")
+                            
+                            // DEBUG: Log incoming chunk (REMOVE WHEN DEBUG COMPLETE)
+                            debugLogger?.invoke(
+                                "IN",
+                                chunk,
+                                readBuffer.take(bytesRead).joinToString(" ") { "%02x".format(it) },
+                                true,
+                                null
+                            )
                             
                             // Check if we have a complete response
                             val responseStr = response.toString()
+                            Log.d(TAG, "📥 FULL RESPONSE SO FAR: '$responseStr' (${responseStr.length} chars)")
+                            
                             if (isCompleteEDMResponse(responseStr)) {
-                                Log.d(TAG, "Complete EDM response received: '$responseStr'")
+                                Log.d(TAG, "✅ Complete EDM response received: '$responseStr'")
                                 return@withContext SerialResponse(
                                     success = true,
                                     data = responseStr.trim()
                                 )
+                            } else {
+                                Log.d(TAG, "⏳ Response not yet complete, continuing to read...")
                             }
                         }
                     } catch (e: IOException) {
@@ -179,6 +212,16 @@ class SerialCommunicationModule(private val context: Context) {
                     )
                 } else {
                     Log.e(TAG, "No response received from EDM device within timeout")
+                    
+                    // DEBUG: Log timeout error (REMOVE WHEN DEBUG COMPLETE)
+                    debugLogger?.invoke(
+                        "IN",
+                        "",
+                        "",
+                        false,
+                        "Timeout: No response received from EDM device within ${timeoutMs}ms"
+                    )
+                    
                     return@withContext SerialResponse(
                         success = false,
                         error = "No response from EDM device - check connection and prism position"
@@ -214,8 +257,18 @@ class SerialCommunicationModule(private val context: Context) {
         }
         
         // Check for Mato MTS602R+ specific patterns
-        // Typical response might be like: "12.345\r\n" or "SD:12345mm\r\n"
-        if (trimmed.matches(Regex("\\d+\\.\\d+"))) {
+        // Expected format: "0003928 0971024 0782509 9c" 
+        // - 7 digits (slope distance)
+        // - 7 digits (vertical angle) 
+        // - 7 digits (horizontal angle)
+        // - 2 characters (status code - can be hex like 9c or decimal like 83)
+        val parts = trimmed.split("\\s+".toRegex())
+        if (parts.size == 4 && 
+            parts[0].matches(Regex("\\d{7}")) &&
+            parts[1].matches(Regex("\\d{7}")) && 
+            parts[2].matches(Regex("\\d{7}")) &&
+            parts[3].matches(Regex("[0-9a-fA-F]{2}"))) {
+            Log.d(TAG, "✅ Detected Mato MTS602R+ response format: '$trimmed'")
             return true
         }
         
