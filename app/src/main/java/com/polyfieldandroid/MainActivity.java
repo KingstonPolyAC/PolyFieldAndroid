@@ -91,9 +91,9 @@ public class MainActivity extends Activity {
 
     private double getDemoUKARadius(String circleType) {
         switch (circleType) {
-            case "SHOT": return 1.065; // 2.13m diameter
+            case "SHOT": return 1.0675; // 2.135m diameter
             case "DISCUS": return 1.25; // 2.5m diameter  
-            case "HAMMER": return 1.065; // 2.13m diameter
+            case "HAMMER": return 1.0675; // 2.135m diameter
             case "JAVELIN_ARC": return 4.0; // 8m diameter arc
             default: return 1.0;
         }
@@ -715,7 +715,7 @@ public class MainActivity extends Activity {
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setGravity(Gravity.CENTER);
         
-        LinearLayout shotCard = createCircleCard("SHOT", "1.065m radius", "±5mm tolerance");
+        LinearLayout shotCard = createCircleCard("SHOT", "1.0675m radius", "±5mm tolerance");
         LinearLayout discusCard = createCircleCard("DISCUS", "1.25m radius", "±5mm tolerance");
         
         row1.addView(shotCard);
@@ -726,7 +726,7 @@ public class MainActivity extends Activity {
         row2.setOrientation(LinearLayout.HORIZONTAL);
         row2.setGravity(Gravity.CENTER);
         
-        LinearLayout hammerCard = createCircleCard("HAMMER", "1.065m radius", "±5mm tolerance");
+        LinearLayout hammerCard = createCircleCard("HAMMER", "1.0675m radius", "±5mm tolerance");
         LinearLayout javelinCard = createCircleCard("JAVELIN_ARC", "4.0m radius", "±5mm tolerance");
         
         row2.addView(hammerCard);
@@ -1000,7 +1000,7 @@ public class MainActivity extends Activity {
                     result = "Circle edge verified within tolerance (DEMO)";
                     break;
                 case "Measure Throw":
-                    result = mobile.Mobile.measureThrow("edm");
+                    result = mobile.Mobile.measureThrowOld("edm");
                     updateCoordinates();
                     break;
                 case "Measure Wind":

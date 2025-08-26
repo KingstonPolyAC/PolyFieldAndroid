@@ -25,9 +25,9 @@ import androidx.compose.ui.unit.sp
 // UKA radius helper - EXACT values from original
 fun getDemoUKARadius(circleType: String): Double {
     return when (circleType) {
-        "SHOT" -> 1.065      // 2.13m diameter
+        "SHOT" -> 1.0675     // 2.135m diameter
         "DISCUS" -> 1.25     // 2.5m diameter  
-        "HAMMER" -> 1.065    // 2.13m diameter
+        "HAMMER" -> 1.0675   // 2.135m diameter
         "JAVELIN_ARC" -> 8.0 // 16m diameter with 10mm tolerance
         else -> 1.0
     }
@@ -119,52 +119,95 @@ fun PolyFieldHeaderExact(
 // SELECT_EVENT_TYPE Screen - Exact match
 @Composable
 fun SelectEventTypeScreenExact(
-    onEventSelected: (String) -> Unit
+    onEventSelected: (String) -> Unit,
+    onSettingsClick: () -> Unit = {}
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
     val screenHeight = configuration.screenHeightDp
     
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(maxOf(20f, screenWidth * 0.025f).dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier.fillMaxSize()
     ) {
-        // Title
-        Text(
-            text = "Select Event Type",
-            fontSize = maxOf(24f, screenWidth * 0.028f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF333333),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = maxOf(20f, screenHeight * 0.025f).dp)
-        )
-        
-        // Horizontal card container matching original - ONLY 2 cards
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .weight(1f)
-                .padding(vertical = 20.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(maxOf(20f, screenWidth * 0.025f).dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            EventTypeCardExact(
-                title = "Throws",
-                description = "Shot, Discus, Hammer, Javelin",
-                onClick = { onEventSelected("Throws") },
-                screenWidth = screenWidth,
-                screenHeight = screenHeight
+            // Title
+            Text(
+                text = "Select Event Type",
+                fontSize = maxOf(24f, screenWidth * 0.028f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF333333),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = maxOf(20f, screenHeight * 0.025f).dp)
             )
             
-            EventTypeCardExact(
-                title = "Horizontal Jumps", 
-                description = "Long Jump, Triple Jump",
-                onClick = { onEventSelected("Horizontal Jumps") },
-                screenWidth = screenWidth,
-                screenHeight = screenHeight
-            )
+            // Horizontal card container matching original - ONLY 2 cards
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 20.dp, horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                EventTypeCardExact(
+                    title = "Throws",
+                    description = "Shot, Discus, Hammer, Javelin",
+                    onClick = { onEventSelected("Throws") },
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    modifier = Modifier.weight(1f)
+                )
+                
+                EventTypeCardExact(
+                    title = "Horizontal Jumps", 
+                    description = "Long Jump, Triple Jump",
+                    onClick = { onEventSelected("Horizontal Jumps") },
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        
+        // Bottom navigation with settings button
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp),
+            shape = RectangleShape,
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onSettingsClick,
+                    modifier = Modifier.width(200.dp),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1976D2)
+                    )
+                ) {
+                    Text(
+                        text = "⚙️ Settings",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
         }
     }
 }
@@ -175,11 +218,11 @@ fun EventTypeCardExact(
     description: String,
     onClick: () -> Unit,
     screenWidth: Int,
-    screenHeight: Int
+    screenHeight: Int,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
-            .width(maxOf(280f, screenWidth * 0.35f).dp)
+        modifier = modifier
             .height(maxOf(220f, screenHeight * 0.32f).dp)
             .clickable { onClick() }
             .border(
@@ -273,6 +316,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.edm.serialPort,
                     ipAddress = devices.edm.ipAddress,
                     port = devices.edm.port,
+                    deviceName = devices.edm.deviceName,
                     isEnabled = true,
                     onConnect = { onConnectDevice("edm") },
                     onConfigure = { onToggleDeviceSetupModal("edm") }
@@ -289,6 +333,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.scoreboard.serialPort,
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
+                    deviceName = devices.scoreboard.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -305,6 +350,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.edm.serialPort,
                     ipAddress = devices.edm.ipAddress,
                     port = devices.edm.port,
+                    deviceName = devices.edm.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -321,6 +367,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.wind.serialPort,
                     ipAddress = devices.wind.ipAddress,
                     port = devices.wind.port,
+                    deviceName = devices.wind.deviceName,
                     isEnabled = true,
                     onConnect = { onConnectDevice("wind") },
                     onConfigure = { onToggleDeviceSetupModal("wind") }
@@ -337,6 +384,7 @@ fun DeviceSetupScreenExact(
                     serialPort = devices.scoreboard.serialPort,
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
+                    deviceName = devices.scoreboard.deviceName,
                     isEnabled = false,
                     onConnect = { /* Disabled */ },
                     onConfigure = { /* Disabled */ }
@@ -358,6 +406,7 @@ fun DeviceStatusCard(
     serialPort: String,
     ipAddress: String,
     port: Int,
+    deviceName: String = "", // Real device name like "Mato MTS-602R+"
     isEnabled: Boolean = true,
     onConnect: () -> Unit,
     onConfigure: () -> Unit
@@ -406,13 +455,24 @@ fun DeviceStatusCard(
             if (!isDemoMode && isEnabled) {
                 Text(
                     text = if (connectionType == "serial") {
-                        "Serial: $serialPort"
+                        val displayName = if (deviceName.isNotEmpty()) deviceName else serialPort
+                        if (connected) "Connected: $displayName" else "Serial: $displayName"
                     } else {
-                        "Network: $ipAddress:$port"
+                        if (connected) "Connected: $ipAddress:$port" else "Network: $ipAddress:$port"  
                     },
                     fontSize = 14.sp,
-                    color = Color(0xFF666666)
+                    color = if (connected) Color(0xFF4CAF50) else Color(0xFF666666)
                 )
+                
+                // Show connection type for connected devices
+                if (connected && connectionType == "serial" && deviceName.isNotEmpty()) {
+                    Text(
+                        text = "Serial: $serialPort",
+                        fontSize = 12.sp,
+                        color = Color(0xFF1976D2),
+                        modifier = androidx.compose.ui.Modifier.padding(top = 4.dp)
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(15.dp))

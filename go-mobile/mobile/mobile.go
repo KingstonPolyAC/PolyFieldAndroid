@@ -595,7 +595,8 @@ func triggerSingleEDMRead(dev *Device) (*ParsedEDMReading, error) {
 	}
 }
 
-func GetReliableEDMReading(devType string) string {
+// UPDATED: Add singleMode parameter to support both single and double reading modes
+func GetReliableEDMReading(devType string, singleMode bool) string {
 	appMux.Lock()
 	isDemoMode := demoMode
 	device, ok := devices[devType]
@@ -617,32 +618,55 @@ func GetReliableEDMReading(devType string) string {
 	
 	// For USB devices managed by Android, return a signal that Android should handle the communication
 	if device.ConnectionType == "usb_android" {
-		return fmt.Sprintf("{\"error\": \"USB_ANDROID_DELEGATE\", \"deviceType\": \"%s\"}", devType)
+		return fmt.Sprintf("{\"error\": \"USB_ANDROID_DELEGATE\", \"deviceType\": \"%s\", \"singleMode\": %t}", devType, singleMode)
 	}
 
-	r1, e1 := triggerSingleEDMRead(device)
-	if e1 != nil {
-		return fmt.Sprintf("{\"error\": \"first read failed: %s\"}", e1.Error())
-	}
-
-	time.Sleep(delayBetweenReadsInPair)
-
-	r2, e2 := triggerSingleEDMRead(device)
-	if e2 != nil {
-		return fmt.Sprintf("{\"error\": \"second read failed: %s\"}", e2.Error())
-	}
-
-	if math.Abs(r1.SlopeDistanceMm-r2.SlopeDistanceMm) <= sdToleranceMm {
+	// UPDATED: Handle single mode vs double mode based on Android UI setting
+	if singleMode {
+		// Single read mode
+		r1, e1 := triggerSingleEDMRead(device)
+		if e1 != nil {
+			return fmt.Sprintf("{\"error\": \"single read failed: %s\"}", e1.Error())
+		}
+		
 		reading := &AveragedEDMReading{
-			SlopeDistanceMm: (r1.SlopeDistanceMm + r2.SlopeDistanceMm) / 2.0,
-			VAzDecimal:      (r1.VAzDecimal + r2.VAzDecimal) / 2.0,
-			HARDecimal:      (r1.HARDecimal + r2.HARDecimal) / 2.0,
+			SlopeDistanceMm: r1.SlopeDistanceMm,
+			VAzDecimal:      r1.VAzDecimal,
+			HARDecimal:      r1.HARDecimal,
 		}
 		jsonData, _ := json.Marshal(reading)
 		return string(jsonData)
+	} else {
+		// Double read mode with tolerance check
+		r1, e1 := triggerSingleEDMRead(device)
+		if e1 != nil {
+			return fmt.Sprintf("{\"error\": \"first read failed: %s\"}", e1.Error())
+		}
+
+		time.Sleep(delayBetweenReadsInPair)
+
+		r2, e2 := triggerSingleEDMRead(device)
+		if e2 != nil {
+			return fmt.Sprintf("{\"error\": \"second read failed: %s\"}", e2.Error())
+		}
+
+		if math.Abs(r1.SlopeDistanceMm-r2.SlopeDistanceMm) <= sdToleranceMm {
+			reading := &AveragedEDMReading{
+				SlopeDistanceMm: (r1.SlopeDistanceMm + r2.SlopeDistanceMm) / 2.0,
+				VAzDecimal:      (r1.VAzDecimal + r2.VAzDecimal) / 2.0,
+				HARDecimal:      (r1.HARDecimal + r2.HARDecimal) / 2.0,
+			}
+			jsonData, _ := json.Marshal(reading)
+			return string(jsonData)
+		}
+		
+		return fmt.Sprintf("{\"error\": \"readings inconsistent. R1(SD): %.0fmm, R2(SD): %.0fmm\"}", r1.SlopeDistanceMm, r2.SlopeDistanceMm)
 	}
-	
-	return fmt.Sprintf("{\"error\": \"readings inconsistent. R1(SD): %.0fmm, R2(SD): %.0fmm\"}", r1.SlopeDistanceMm, r2.SlopeDistanceMm)
+}
+
+// LEGACY: Keep old function for backward compatibility
+func GetReliableEDMReadingOld(devType string) string {
+	return GetReliableEDMReading(devType, false) // Default to double mode
 }
 
 // --- Calibration Functions ---
@@ -661,6 +685,36 @@ func GetCalibration(devType string) string {
 		TargetRadius:       UkaRadiusShot,
 	}
 	jsonData, _ := json.Marshal(defaultCal)
+	return string(jsonData)
+}
+
+func SetEdgeVerificationResult(devType string, measuredRadius, differenceMm, toleranceMm float64, isInTolerance bool) string {
+	appMux.Lock()
+	defer appMux.Unlock()
+	
+	cal, exists := calibrationStore[devType]
+	if !exists {
+		return "{\"error\": \"No calibration data found for device type\"}"
+	}
+	
+	cal.EdgeVerificationResult = &EdgeVerificationResult{
+		MeasuredRadius:     measuredRadius,
+		DifferenceMm:       differenceMm,
+		IsInTolerance:      isInTolerance,
+		ToleranceAppliedMm: toleranceMm,
+	}
+	
+	calibrationStore[devType] = cal
+	
+	result := map[string]interface{}{
+		"success":        true,
+		"message":        "Edge verification result updated successfully",
+		"isInTolerance":  isInTolerance,
+		"measuredRadius": measuredRadius,
+		"differenceMm":   differenceMm,
+	}
+	
+	jsonData, _ := json.Marshal(result)
 	return string(jsonData)
 }
 
@@ -697,7 +751,8 @@ func ResetCalibration(devType string) string {
 	return "{\"success\": true}"
 }
 
-func SetCentre(devType string) string {
+// UPDATED: Add singleMode parameter
+func SetCentre(devType string, singleMode bool) string {
 	var reading *AveragedEDMReading
 	
 	appMux.Lock()
@@ -717,7 +772,7 @@ func SetCentre(devType string) string {
 		time.Sleep(CENTRE_DELAY)
 		reading = generateDemoCentreReading(devType, targetRadius)
 	} else {
-		readingStr := GetReliableEDMReading(devType)
+		readingStr := GetReliableEDMReading(devType, singleMode)
 		
 		// Check if this is a USB delegation request
 		if strings.Contains(readingStr, "USB_ANDROID_DELEGATE") {
@@ -752,6 +807,8 @@ func SetCentre(devType string) string {
 		"slopeDistanceMm": reading.SlopeDistanceMm,
 		"vAzDecimal":      reading.VAzDecimal,
 		"hARDecimal":      reading.HARDecimal,
+		"stationX":        stationX,
+		"stationY":        stationY,
 		"message":         "Centre point set successfully",
 	}
 	
@@ -759,7 +816,7 @@ func SetCentre(devType string) string {
 	return string(jsonData)
 }
 
-func VerifyEdge(devType string, targetRadius float64) string {
+func VerifyEdge(devType string, targetRadius float64, singleMode bool) string {
 	appMux.Lock()
 	cal, exists := calibrationStore[devType]
 	isDemoMode := demoMode
@@ -778,7 +835,7 @@ func VerifyEdge(devType string, targetRadius float64) string {
 		time.Sleep(EDGE_DELAY)
 		reading = generateDemoEdgeReading(devType, actualTargetRadius)
 	} else {
-		readingStr := GetReliableEDMReading(devType)
+		readingStr := GetReliableEDMReading(devType, singleMode)
 		
 		// Check if this is a USB delegation request
 		if strings.Contains(readingStr, "USB_ANDROID_DELEGATE") {
@@ -836,7 +893,7 @@ func VerifyEdge(devType string, targetRadius float64) string {
 	return string(jsonData)
 }
 
-func MeasureThrow(devType string) string {
+func MeasureThrow(devType string, singleMode bool) string {
 	appMux.Lock()
 	cal, exists := calibrationStore[devType]
 	isDemoMode := demoMode
@@ -860,7 +917,7 @@ func MeasureThrow(devType string) string {
 		time.Sleep(THROW_DELAY)
 		reading = generateDemoThrowReading(devType, targetRadius, circleType)
 	} else {
-		readingStr := GetReliableEDMReading(devType)
+		readingStr := GetReliableEDMReading(devType, singleMode)
 		
 		// Check if this is a USB delegation request
 		if strings.Contains(readingStr, "USB_ANDROID_DELEGATE") {
@@ -909,6 +966,40 @@ func MeasureThrow(devType string) string {
 		"timestamp": coord.Timestamp.Format(time.RFC3339),
 	}
 
+	jsonData, _ := json.Marshal(result)
+	return string(jsonData)
+}
+
+// SetCalibrationState allows Android to manually set Go Mobile's calibration state
+// This is used when Android handles EDM communication via delegation but we need
+// Go Mobile to recognize the calibration state for subsequent operations
+func SetCalibrationState(devType string, stationX, stationY, targetRadius float64, circleType string) string {
+	appMux.Lock()
+	defer appMux.Unlock()
+	
+	// Set up the calibration data with the station coordinates and target radius from Android
+	cal := &EDMCalibrationData{
+		StationCoordinates: EDMPoint{
+			X: stationX,
+			Y: stationY,
+		},
+		TargetRadius:        targetRadius,
+		SelectedCircleType:  circleType,
+		IsCentreSet:         true, // This is the key - mark centre as set
+		EdgeVerificationResult: nil, // Will be set when edge verification is performed
+	}
+	
+	calibrationStore[devType] = cal
+	
+	result := map[string]interface{}{
+		"success": true,
+		"message": "Calibration state set successfully",
+		"stationX": stationX,
+		"stationY": stationY,
+		"targetRadius": targetRadius,
+		"circleType": circleType,
+	}
+	
 	jsonData, _ := json.Marshal(result)
 	return string(jsonData)
 }
@@ -1060,4 +1151,22 @@ func CalculateCircleAccuracy(measuredRadius, targetRadius float64) string {
 
 	jsonData, _ := json.Marshal(result)
 	return string(jsonData)
+}
+
+// --- Legacy Compatibility Functions ---
+// These maintain backward compatibility for existing Android code that doesn't specify singleMode
+
+func SetCentreOld(devType string) string {
+	// Default to double read mode (false) for backward compatibility
+	return SetCentre(devType, false)
+}
+
+func VerifyEdgeOld(devType string, targetRadius float64) string {
+	// Default to double read mode (false) for backward compatibility
+	return VerifyEdge(devType, targetRadius, false)
+}
+
+func MeasureThrowOld(devType string) string {
+	// Default to double read mode (false) for backward compatibility
+	return MeasureThrow(devType, false)
 }

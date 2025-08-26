@@ -37,8 +37,7 @@ fun MeasurementScreenExact(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(16.dp)
     ) {
         // Title
         Text(
@@ -71,33 +70,6 @@ fun MeasurementScreenExact(
                 )
             }
             
-            // Action buttons for throws
-            Spacer(modifier = Modifier.height(30.dp))
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (throwCoordinates.isNotEmpty()) {
-                    Button(
-                        onClick = onShowHeatMap,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1976D2)
-                        )
-                    ) {
-                        Text("📊 Heat Map", color = Color.White)
-                    }
-                }
-                
-                OutlinedButton(
-                    onClick = onResetSession,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Reset Session", color = Color(0xFFF44336))
-                }
-            }
-            
         } else {
             // Horizontal Jumps measurement interface  
             HorizontalJumpsMeasurementInterface(
@@ -105,27 +77,6 @@ fun MeasurementScreenExact(
                 isLoading = isLoading,
                 onMeasureWind = onMeasureWind,
                 screenWidth = screenWidth
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(40.dp))
-        
-        // New Event button
-        Button(
-            onClick = onNewEvent,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            shape = RoundedCornerShape(25.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFE0E0E0),
-                contentColor = Color(0xFF333333)
-            )
-        ) {
-            Text(
-                text = "← New Event",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
             )
         }
     }
@@ -410,22 +361,24 @@ fun BottomNavigationExact(
                 Spacer(modifier = Modifier.width(16.dp))
             }
             
-            // Next/New Event button
-            Button(
-                onClick = if (currentScreen == "MEASUREMENT") onNewEventClick else onNextClick,
-                enabled = if (currentScreen == "MEASUREMENT") true else canGoForward,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(25.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (currentScreen == "MEASUREMENT") Color(0xFFE0E0E0) else Color(0xFF1976D2),
-                    contentColor = if (currentScreen == "MEASUREMENT") Color(0xFF333333) else Color.White
-                )
-            ) {
-                Text(
-                    text = if (currentScreen == "MEASUREMENT") "New Event" else "Next →",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            // Next/New Event button - hide on heat map screen
+            if (currentScreen != "HEAT_MAP") {
+                Button(
+                    onClick = if (currentScreen == "MEASUREMENT") onNewEventClick else onNextClick,
+                    enabled = if (currentScreen == "MEASUREMENT") true else canGoForward,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentScreen == "MEASUREMENT") Color(0xFFE0E0E0) else Color(0xFF1976D2),
+                        contentColor = if (currentScreen == "MEASUREMENT") Color(0xFF333333) else Color.White
+                    )
+                ) {
+                    Text(
+                        text = if (currentScreen == "MEASUREMENT") "New Event" else "Next →",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
