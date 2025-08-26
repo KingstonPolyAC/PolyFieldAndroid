@@ -248,6 +248,12 @@ fun CalibrationSectorLineScreen(
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1976D2)
                     )
+                    Text(
+                        text = "beyond circle edge",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF666666),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
         }
@@ -1258,8 +1264,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             
             _uiState.value = _uiState.value.copy(
                 calibration = _uiState.value.calibration.copy(
-                    edgeVerified = toleranceCheck,
-                    edgeResult = edgeResult
+                    edgeVerified = true,  // Edge verification completed successfully (measurement obtained)
+                    edgeResult = edgeResult  // Contains toleranceCheck for pass/fail status
                 ),
                 isLoading = false
             )
@@ -1342,8 +1348,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         
                         _uiState.value = _uiState.value.copy(
                             calibration = _uiState.value.calibration.copy(
-                                edgeVerified = toleranceCheck,
-                                edgeResult = edgeResult
+                                edgeVerified = true,  // Edge verification completed successfully (measurement obtained)
+                                edgeResult = edgeResult  // Contains toleranceCheck for pass/fail status
                             ),
                             isLoading = false
                         )
@@ -1409,14 +1415,16 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     android.util.Log.d("PolyField", "Measuring sector line with Go Mobile calculations...")
                     
                     // Use Go Mobile's measureThrow function for sector line (it's the same calculation)
-                    val result = edmModule.measureThrowWithGoMobile("edm")
+                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    val result = edmModule.measureThrowWithGoMobile("edm", isDoubleReadMode)
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
                         val jsonResult = JSONObject(goMobileResult)
                         
                         // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
-                        val distance = if (jsonResult.has("distance")) {
+                        // Extract the total distance from center first
+                        val totalDistance = if (jsonResult.has("distance")) {
                             jsonResult.getDouble("distance")
                         } else if (jsonResult.has("distanceFromCentre")) {
                             jsonResult.getDouble("distanceFromCentre") 
@@ -1430,20 +1438,26 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                             return@launch
                         }
                         
-                        android.util.Log.d("PolyField", "Sector line measurement successful with Go Mobile: ${distance}m")
+                        android.util.Log.d("PolyField", "Sector line measurement successful with Go Mobile: ${totalDistance}m from center")
+                        
+                        // Calculate distance beyond circle edge (distance from center minus circle radius)
+                        val targetRadius = _uiState.value.calibration.targetRadius
+                        val distanceBeyondCircle = totalDistance - targetRadius
+                        
+                        android.util.Log.d("PolyField", "Sector line: ${totalDistance}m from center, ${distanceBeyondCircle}m beyond circle edge (radius: ${targetRadius}m)")
                         
                         // Calculate sector line coordinates based on UKA/WA angles
                         // Shot/Discus/Hammer: 34.92° total (17.46° each side), Javelin: 28.96° total (14.48° each side)
                         val sectorAngleDegrees = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 14.48 else 17.46
                         val sectorLineCoordinates = Pair(
-                            distance * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
-                            distance * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
+                            totalDistance * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
+                            totalDistance * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
                         )
                         
                         _uiState.value = _uiState.value.copy(
                             calibration = _uiState.value.calibration.copy(
                                 sectorLineSet = true,
-                                sectorLineDistance = distance,
+                                sectorLineDistance = distanceBeyondCircle,  // Store distance beyond circle edge
                                 sectorLineCoordinates = sectorLineCoordinates
                             ),
                             isLoading = false
@@ -1477,6 +1491,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         
         if (_uiState.value.isDemoMode) {
             // Demo mode - use simulated values
+            val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+            android.util.Log.d("PolyField", "🔵 measureDistance DEMO - Double read mode setting: $isDoubleReadMode")
             val distance = generateDemoThrow()
             _uiState.value = _uiState.value.copy(
                 measurement = String.format("%.2f m", distance),
@@ -1510,6 +1526,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     // 2. Applies proper trigonometric calculations (horizontal distance from centre minus radius)
                     // 3. Returns the calculated throw distance and coordinates
                     val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
+                    android.util.Log.d("PolyField", "🔵 measureDistance LIVE - Double read mode setting: $isDoubleReadMode")
                     val result = edmModule.measureThrowWithGoMobile("edm", isDoubleReadMode)
                     
                     if (result["success"] as Boolean) {
@@ -1517,10 +1534,16 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         val jsonResult = JSONObject(goMobileResult)
                         
                         // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
-                        val distance = if (jsonResult.has("distance")) {
-                            jsonResult.getDouble("distance")
+                        val distance = if (jsonResult.has("distanceBeyondCircle")) {
+                            jsonResult.getDouble("distanceBeyondCircle")
+                        } else if (jsonResult.has("distance")) {
+                            // Fallback: calculate distance beyond circle from total distance
+                            val totalDistance = jsonResult.getDouble("distance")
+                            totalDistance - _uiState.value.calibration.targetRadius
                         } else if (jsonResult.has("throwDistance")) {
-                            jsonResult.getDouble("throwDistance")
+                            // Fallback: calculate distance beyond circle from throw distance
+                            val totalDistance = jsonResult.getDouble("throwDistance")
+                            totalDistance - _uiState.value.calibration.targetRadius
                         } else {
                             android.util.Log.e("PolyField", "CRITICAL: Go Mobile measureThrow missing distance field - REFUSING to use simulation in live mode")
                             android.util.Log.e("PolyField", "Go Mobile result: $goMobileResult")
@@ -1532,7 +1555,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                             return@launch
                         }
                         
-                        android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m")
+                        android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m beyond circle edge")
                         
                         _uiState.value = _uiState.value.copy(
                             measurement = String.format("%.2f m", distance),
@@ -1769,6 +1792,32 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             )
         )
         
+        // CRITICAL: Sync Go Mobile internal state when loading historical calibration
+        if (calibrationRecord.stationCoordinates != null) {
+            val stationX = calibrationRecord.stationCoordinates!!.first
+            val stationY = calibrationRecord.stationCoordinates!!.second
+            val result = mobile.Mobile.setCalibrationState(
+                "edm",
+                stationX,
+                stationY,
+                calibrationRecord.targetRadius,
+                calibrationRecord.circleType
+            )
+            android.util.Log.d("PolyField", "🔵 Synced Go Mobile state for historical calibration: $result")
+            
+            // Also sync edge verification result if available
+            if (calibrationRecord.edgeResult != null) {
+                val edgeResult = mobile.Mobile.setEdgeVerificationResult(
+                    "edm",
+                    calibrationRecord.edgeResult!!.averageRadius,
+                    calibrationRecord.edgeResult!!.deviation,
+                    5.0, // Standard tolerance for throws circles
+                    calibrationRecord.edgeResult!!.toleranceCheck
+                )
+                android.util.Log.d("PolyField", "🔵 Synced edge verification result: $edgeResult")
+            }
+        }
+        
         android.util.Log.d("PolyField", "Loaded historical calibration: ${calibrationRecord.getDisplayName()}")
     }
     
@@ -2003,9 +2052,10 @@ fun SettingsScreen(
                         )
                     }
                     
-                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    // Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                     
-                    // Single/Double Read Toggle
+                    // HIDDEN: Single/Double Read Toggle - disabled for now
+                    /*
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2037,6 +2087,7 @@ fun SettingsScreen(
                     }
                     
                     Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    */
                     
                     // Server Settings
                     Column {
@@ -2669,7 +2720,7 @@ fun PolyFieldApp(viewModel: AppViewModel) {
             eventType = uiState.eventType,
             canGoBack = canGoBack(uiState.currentScreen),
             canGoForward = canGoForward(uiState.currentScreen),
-            showHeatMapButton = uiState.currentScreen == "MEASUREMENT" && uiState.eventType == "Throws" && uiState.throwCoordinates.isNotEmpty(),
+            showHeatMapButton = uiState.currentScreen == "MEASUREMENT" && uiState.eventType == "Throws",
             onBackClick = { navigateBack(viewModel, uiState) },
             onNextClick = { navigateForward(viewModel, uiState) },
             onHeatMapClick = { viewModel.toggleHeatMap() },

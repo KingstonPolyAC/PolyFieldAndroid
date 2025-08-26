@@ -37,8 +37,7 @@ fun MeasurementScreenExact(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(16.dp)
     ) {
         // Title
         Text(
@@ -70,7 +69,6 @@ fun MeasurementScreenExact(
                     screenWidth = screenWidth
                 )
             }
-            
             
         } else {
             // Horizontal Jumps measurement interface  

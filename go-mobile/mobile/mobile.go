@@ -688,6 +688,36 @@ func GetCalibration(devType string) string {
 	return string(jsonData)
 }
 
+func SetEdgeVerificationResult(devType string, measuredRadius, differenceMm, toleranceMm float64, isInTolerance bool) string {
+	appMux.Lock()
+	defer appMux.Unlock()
+	
+	cal, exists := calibrationStore[devType]
+	if !exists {
+		return "{\"error\": \"No calibration data found for device type\"}"
+	}
+	
+	cal.EdgeVerificationResult = &EdgeVerificationResult{
+		MeasuredRadius:     measuredRadius,
+		DifferenceMm:       differenceMm,
+		IsInTolerance:      isInTolerance,
+		ToleranceAppliedMm: toleranceMm,
+	}
+	
+	calibrationStore[devType] = cal
+	
+	result := map[string]interface{}{
+		"success":        true,
+		"message":        "Edge verification result updated successfully",
+		"isInTolerance":  isInTolerance,
+		"measuredRadius": measuredRadius,
+		"differenceMm":   differenceMm,
+	}
+	
+	jsonData, _ := json.Marshal(result)
+	return string(jsonData)
+}
+
 func SaveCalibration(devType string, calibrationJSON string) string {
 	appMux.Lock()
 	defer appMux.Unlock()

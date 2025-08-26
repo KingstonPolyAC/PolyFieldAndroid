@@ -407,13 +407,13 @@ class EDMModule(private val context: Context) {
             
             if (connection?.connectionType == "serial") {
                 Log.d(TAG, "Using existing serial connection for EDM reading")
-                return performSerialEDMReading(deviceType, single)
+                return performSerialEDMReading(deviceType, singleMode = single)
             }
             
             // Fallback: check if we have an active serial port even if connection record is missing
             if (activeSerialPorts.containsKey(deviceType)) {
                 Log.d(TAG, "Using active serial port for EDM reading (fallback)")
-                return performSerialEDMReading(deviceType, single)
+                return performSerialEDMReading(deviceType, singleMode = single)
             }
             
             // Try to detect and connect to serial devices (CH340, FTDI, etc.)
@@ -439,7 +439,7 @@ class EDMModule(private val context: Context) {
                     activeSerialPorts[deviceType] = serialPort
                     
                     // Now perform serial reading
-                    return performSerialEDMReading(deviceType, single)
+                    return performSerialEDMReading(deviceType, singleMode = single)
                 } else {
                     Log.e(TAG, "Failed to connect to USB-to-serial device")
                 }
@@ -499,7 +499,7 @@ class EDMModule(private val context: Context) {
      * Perform Serial EDM reading via USB-to-serial adapter
      * Uses Go Mobile for proper trigonometric calculations
      */
-    private suspend fun performSerialEDMReading(deviceType: String, single: Boolean = false): EDMReading {
+    private suspend fun performSerialEDMReading(deviceType: String, singleMode: Boolean = false): EDMReading {
         try {
             Log.d(TAG, "Performing serial EDM reading via USB-to-serial adapter")
             
@@ -629,7 +629,7 @@ class EDMModule(private val context: Context) {
                 Log.d(TAG, "Go Mobile delegation: Performing EDM reading via serial connection")
                 
                 // Get the actual EDM reading from our serial communication
-                val rawReading = getRawEDMReading(deviceType, !singleMode) // Convert singleMode to double read parameter
+                val rawReading = getRawEDMReading(deviceType, !singleMode) // Convert singleMode to doubleReadMode parameter
                 if (rawReading.success && rawReading.parsedReading != null) {
                     val reading = rawReading.parsedReading!!
                     Log.d(TAG, "Go Mobile EDM data: slope=${reading.slopeDistanceMm}mm, vAz=${reading.verticalAngleDegrees}°, hAr=${reading.horizontalAngleDegrees}°")
@@ -728,7 +728,7 @@ class EDMModule(private val context: Context) {
             
             // For serial connections, Go Mobile handles the double reading internally
             if (connection?.connectionType == "serial") {
-                return performSerialEDMReading(deviceType, single = false)
+                return performSerialEDMReading(deviceType, singleMode = false)
             }
             
             // For direct USB connections, perform double reading on Android side
@@ -943,7 +943,7 @@ class EDMModule(private val context: Context) {
                     Log.d(TAG, "🔄 Getting EDM data via Android, then calling Go Mobile SetCentre again")
                     
                     // Get EDM reading using Android's serial communication
-                    val edmReading = performSerialEDMReading(deviceType, single = !doubleReadMode)
+                    val edmReading = performSerialEDMReading(deviceType, singleMode = !doubleReadMode)
                     
                     if (!edmReading.success) {
                         Log.e(TAG, "❌ Android EDM reading failed: ${edmReading.error}")
@@ -1133,7 +1133,7 @@ class EDMModule(private val context: Context) {
             
             try {
                 // Get EDM reading via USB communication (same as setCentreWithGoMobile)
-                val edmReading = performSerialEDMReading(deviceType, single = singleMode)
+                val edmReading = performSerialEDMReading(deviceType, singleMode = singleMode)
                 
                 if (!edmReading.success) {
                     return@withContext mapOf(
@@ -1180,6 +1180,20 @@ class EDMModule(private val context: Context) {
                 
                 Log.d(TAG, "Edge verification results - Measured: ${measuredRadius}m, Target: ${targetRadius}m, Diff: ${differenceMm}mm, Tolerance: $toleranceCheck")
                 
+                // Store the edge verification result in Go Mobile's calibration data
+                try {
+                    val edgeVerificationResult = mobile.Mobile.setEdgeVerificationResult(
+                        deviceType, 
+                        measuredRadius, 
+                        differenceMm, 
+                        toleranceMm, 
+                        toleranceCheck
+                    )
+                    Log.d(TAG, "✅ SUCCESS! Go Mobile edge verification result updated: $edgeVerificationResult")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ FAILED to update Go Mobile edge verification result: ${e.message}")
+                }
+                
                 // Create result in Go Mobile format
                 val resultJson = JSONObject().apply {
                     put("success", true)
@@ -1225,6 +1239,36 @@ class EDMModule(private val context: Context) {
                 // Parse result
                 val jsonResult = JSONObject(result as String)
                 val hasError = jsonResult.has("error")
+                
+                // Check if Go Mobile is delegating USB communication back to Android
+                if (hasError && jsonResult.getString("error") == "USB_ANDROID_DELEGATE") {
+                    Log.d(TAG, "Go Mobile delegated measureThrow back to Android - performing measurement with USB communication")
+                    
+                    // Get calibration state from Go Mobile to get station coordinates
+                    val calState = mobile.Mobile.getCalibration(deviceType)
+                    Log.d(TAG, "Go Mobile calibration state: $calState")
+                    
+                    val calJson = JSONObject(calState)
+                    
+                    if (!calJson.has("stationCoordinates")) {
+                        Log.e(TAG, "Missing stationCoordinates in calibration state")
+                        return@withContext mapOf(
+                            "success" to false,
+                            "error" to "Station coordinates not available in calibration state"
+                        )
+                    }
+                    
+                    val stationCoords = calJson.getJSONObject("stationCoordinates")
+                    val stationX = stationCoords.getDouble("x")
+                    val stationY = stationCoords.getDouble("y")
+                    val targetRadius = calJson.getDouble("targetRadius")
+                    
+                    Log.d(TAG, "Retrieved station coordinates from Go Mobile: X=$stationX, Y=$stationY")
+                    
+                    // Perform throw measurement using Android USB communication
+                    return@withContext measureThrowViaAndroid(deviceType, stationX, stationY, targetRadius, singleMode)
+                }
+                
                 return@withContext if (hasError) {
                     mapOf(
                         "success" to false,
@@ -1248,6 +1292,91 @@ class EDMModule(private val context: Context) {
         }
     }
     
+    /**
+     * Measure throw using Android USB communication with Go Mobile's trigonometric calculations
+     * Called when Go Mobile returns USB_ANDROID_DELEGATE
+     */
+    private suspend fun measureThrowViaAndroid(deviceType: String, stationX: Double, stationY: Double, targetRadius: Double, singleMode: Boolean): Map<String, Any> {
+        return withContext(Dispatchers.IO) {
+            Log.d(TAG, "Measuring throw via Android USB with station coordinates: X=$stationX, Y=$stationY")
+            
+            try {
+                // Get EDM reading via USB communication (same as verifyEdgeViaAndroid)
+                val edmReading = performSerialEDMReading(deviceType, singleMode = singleMode)
+                
+                if (!edmReading.success) {
+                    return@withContext mapOf(
+                        "success" to false,
+                        "error" to "Failed to get EDM reading: ${edmReading.error}"
+                    )
+                }
+                
+                val goMobileData = edmReading.goMobileData
+                if (goMobileData.isNullOrEmpty()) {
+                    return@withContext mapOf(
+                        "success" to false,
+                        "error" to "No EDM measurement data available"
+                    )
+                }
+                
+                // Parse the detailed measurement data
+                val detailedData = JSONObject(goMobileData)
+                val slopeDistanceMm = detailedData.getDouble("slopeDistanceMm")
+                val vAzDecimal = detailedData.getDouble("vAzDecimal")
+                val hARDecimal = detailedData.getDouble("harDecimal")
+                
+                Log.d(TAG, "Throw measurement reading - SD: ${slopeDistanceMm}mm, VAz: ${vAzDecimal}°, HAR: ${hARDecimal}°")
+                
+                // Perform trigonometric calculations (same as Go Mobile)
+                val slopeDistanceMeters = slopeDistanceMm / 1000.0
+                val vAzRadians = Math.toRadians(vAzDecimal)
+                val hARRadians = Math.toRadians(hARDecimal)
+                
+                val horizontalDistance = slopeDistanceMeters * Math.sin(vAzRadians)
+                val throwX = horizontalDistance * Math.cos(hARRadians)
+                val throwY = horizontalDistance * Math.sin(hARRadians)
+                
+                val absoluteThrowX: Double = stationX + throwX
+                val absoluteThrowY: Double = stationY + throwY
+                
+                // Calculate distance from centre (0,0)
+                val distanceFromCentre = Math.sqrt(absoluteThrowX * absoluteThrowX + absoluteThrowY * absoluteThrowY)
+                
+                // Calculate performance metrics
+                val distanceBeyondCircle = distanceFromCentre - targetRadius
+                
+                Log.d(TAG, "Throw measurement results - Distance from centre: ${distanceFromCentre}m, Beyond circle: ${distanceBeyondCircle}m")
+                
+                // Create result in Go Mobile format
+                val resultJson = JSONObject().apply {
+                    put("success", true)
+                    put("distance", distanceFromCentre)
+                    put("distanceFromCentre", distanceFromCentre)
+                    put("throwDistance", distanceFromCentre)
+                    put("distanceBeyondCircle", distanceBeyondCircle)
+                    put("throwX", absoluteThrowX)
+                    put("throwY", absoluteThrowY)
+                    put("slopeDistanceMm", slopeDistanceMm)
+                    put("vAzDecimal", vAzDecimal)
+                    put("hARDecimal", hARDecimal)
+                    put("message", "Throw measurement completed via Android USB communication")
+                }
+                
+                return@withContext mapOf(
+                    "success" to true,
+                    "result" to resultJson.toString()
+                )
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "measureThrowViaAndroid failed", e)
+                return@withContext mapOf(
+                    "success" to false,
+                    "error" to "Throw measurement failed: ${e.message}"
+                )
+            }
+        }
+    }
+    
     data class RawEDMResult(
         val success: Boolean,
         val parsedReading: EDMParsedReading? = null,
@@ -1260,6 +1389,7 @@ class EDMModule(private val context: Context) {
      * Supports both single and double read modes
      */
     private suspend fun getRawEDMReading(deviceType: String, doubleReadMode: Boolean = false): RawEDMResult {
+        Log.d(TAG, "🔵 getRawEDMReading called with doubleReadMode: $doubleReadMode")
         return withContext(Dispatchers.IO) {
             Log.d(TAG, "Getting raw EDM reading for Go Mobile processing")
             
@@ -1291,7 +1421,7 @@ class EDMModule(private val context: Context) {
                         val measureCommandBytes = edmTranslator.getMeasurementCommand()
                         
                         if (doubleReadMode) {
-                            Log.d(TAG, "Performing double EDM reading with tolerance checking")
+                            Log.d(TAG, "🔵 Performing double EDM reading with tolerance checking")
                             
                             // First reading
                             val response1 = serialCommunicationModule.sendEDMCommandBytes(
@@ -1374,7 +1504,7 @@ class EDMModule(private val context: Context) {
                             }
                             
                         } else {
-                            Log.d(TAG, "Performing single EDM reading")
+                            Log.d(TAG, "🔵 Performing single EDM reading (doubleReadMode=false)")
                             
                             // Single reading
                             val response = serialCommunicationModule.sendEDMCommandBytes(
