@@ -224,7 +224,7 @@ class SerialCommunicationModule(private val context: Context) {
                     
                     return@withContext SerialResponse(
                         success = false,
-                        error = "No response from EDM device - check connection and prism position"
+                        error = "No response from EDM. Press F1 on EDM to reset if \"STOP\" is displayed"
                     )
                 }
                 

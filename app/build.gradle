@@ -23,7 +23,7 @@ android {
         applicationId "com.polyfieldandroid"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 42
+        versionCode 43
         versionName "4.2"
     }
     
@@ -53,9 +53,9 @@ android {
         }
         release {
             storeFile file('my-release-key.keystore')
-            storePassword 'polyfield'
+            storePassword 'android123'
             keyAlias 'my-key-alias'
-            keyPassword 'polyfield'
+            keyPassword 'android123'
         }
     }
     
@@ -67,6 +67,8 @@ android {
             signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            debuggable false
+            jniDebuggable false
         }
     }
 

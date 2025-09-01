@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST_CODE = 100;
     private BroadcastReceiver usbReceiver;
     
-    // Original color scheme from React Native
+    // Original color scheme
     private static final int PRIMARY_BLUE = Color.parseColor("#1976D2");
     private static final int BACKGROUND_GRAY = Color.parseColor("#f5f5f5");
     private static final int CARD_WHITE = Color.WHITE;

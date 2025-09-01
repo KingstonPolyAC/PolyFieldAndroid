@@ -5,7 +5,7 @@ buildscript {
         buildToolsVersion = "34.0.0"
         minSdkVersion = 21
         compileSdkVersion = 34
-        targetSdkVersion = 33
+        targetSdkVersion = 34
         kotlinVersion = "1.9.22"
 
         // We use NDK r28c which is the latest stable NDK with full API 21+ support.
