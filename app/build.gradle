@@ -1,5 +1,6 @@
 apply plugin: "com.android.application"
 apply plugin: "kotlin-android"
+apply plugin: "org.jetbrains.kotlin.plugin.compose"
 
 import com.android.build.OutputFile
 
@@ -16,7 +17,7 @@ def enableSeparateBuildPerCPUArchitecture = false
 
 android {
     compileSdkVersion rootProject.ext.compileSdkVersion
-    compileSdk 34
+    compileSdk 35
 
     namespace "com.polyfieldandroid"
     defaultConfig {
@@ -41,7 +42,7 @@ android {
     }
     
     composeOptions {
-        kotlinCompilerExtensionVersion = '1.5.8'
+        kotlinCompilerExtensionVersion = '1.9.0'
     }
     
     signingConfigs {
@@ -80,26 +81,23 @@ android {
             include "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
         }
     }
-
-    packagingOptions {
-        pickFirst "**/armeabi-v7a/libc++_shared.so"
-        pickFirst "**/x86/libc++_shared.so"
-        pickFirst "**/arm64-v8a/libc++_shared.so"
-        pickFirst "**/x86_64/libc++_shared.so"
-        pickFirst "**/x86/libjsc.so"
-        pickFirst "**/armeabi-v7a/libjsc.so"
+    packaging {
+        jniLibs {
+            pickFirsts += ['**/armeabi-v7a/libc++_shared.so', '**/x86/libc++_shared.so', '**/arm64-v8a/libc++_shared.so', '**/x86_64/libc++_shared.so', '**/x86/libjsc.so', '**/armeabi-v7a/libjsc.so']
+        }
     }
+
 }
 
 dependencies {
-    implementation files('libs/mobile.aar')
+    // Native Kotlin EDM calculations
     implementation 'com.google.code.gson:gson:2.10.1'
     
     // Kotlin
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.1.0"
     
-    // Compose BOM - ensures compatible versions
-    implementation platform('androidx.compose:compose-bom:2023.10.01')
+    // Compose BOM - ensures compatible versions (2025 latest)
+    implementation platform('androidx.compose:compose-bom:2025.08.00')
     
     // Jetpack Compose
     implementation 'androidx.compose.ui:ui'
@@ -108,12 +106,12 @@ dependencies {
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.compose.runtime:runtime'
     implementation 'androidx.compose.foundation:foundation'
-    implementation 'androidx.activity:activity-compose:1.8.2'
+    implementation 'androidx.activity:activity-compose:1.9.3'
     
-    // AndroidX Core
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
+    // AndroidX Core (2025 latest stable)
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
     
     // USB and permissions
     implementation 'androidx.appcompat:appcompat:1.6.1'

@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
@@ -243,7 +244,7 @@ fun CalibrationSectorLineScreen(
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     Text(
-                        text = "${String.format("%.3f", calibration.sectorLineDistance)} m",
+                        text = "${String.format(java.util.Locale.UK, "%.3f", calibration.sectorLineDistance)} m",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1976D2)
@@ -723,28 +724,22 @@ data class AppState(
     val debugCommStreamVisible: Boolean = false
 )
 
-class AppViewModel(private val context: android.content.Context) : androidx.lifecycle.ViewModel() {
+class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewModel() {
     private val _uiState = MutableStateFlow(AppState())
     val uiState: StateFlow<AppState> = _uiState.asStateFlow()
     
-    // EDM Module for device communication
-    private val edmModule = EDMModule(context)
+    // EDM Module for device communication - use Application context to avoid memory leaks
+    private val edmModule = EDMModule(context.applicationContext)
     
-    // SharedPreferences for persistent storage
-    private val sharedPrefs = context.getSharedPreferences("PolyFieldCalibrations", android.content.Context.MODE_PRIVATE)
+    // SharedPreferences for persistent storage - use Application context to avoid memory leaks
+    private val sharedPrefs = context.applicationContext.getSharedPreferences("PolyFieldCalibrations", android.content.Context.MODE_PRIVATE)
     
     init {
         // Load calibration history on startup
         loadCalibrationHistoryFromDisk()
         
-        // CRITICAL: Initialize Go Mobile demo mode to prevent simulation in live mode
-        try {
-            val initialDemoMode = _uiState.value.isDemoMode
-            mobile.Mobile.setDemoMode(initialDemoMode)
-            android.util.Log.d("PolyField", "Go Mobile initialized with demo mode: $initialDemoMode")
-        } catch (e: Exception) {
-            android.util.Log.e("PolyField", "Failed to initialize Go Mobile demo mode", e)
-        }
+        // Demo mode is now handled directly in Kotlin - no Go Mobile initialization needed
+        android.util.Log.d("PolyField", "Demo mode set to: ${_uiState.value.isDemoMode}")
         
         // DEBUG: Setup serial communication logging (REMOVE WHEN DEBUG COMPLETE)
         edmModule.setDebugLogger { direction, data, dataHex, success, error ->
@@ -860,13 +855,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
         val newMode = !currentMode
         _uiState.value = _uiState.value.copy(isDemoMode = newMode)
         
-        // CRITICAL: Tell Go Mobile the current demo mode to prevent simulation in live mode
-        try {
-            mobile.Mobile.setDemoMode(newMode)
-            android.util.Log.d("PolyField", "Go Mobile demo mode set to: $newMode")
-        } catch (e: Exception) {
-            android.util.Log.e("PolyField", "Failed to set Go Mobile demo mode", e)
-        }
+        // Demo mode is now handled natively in Kotlin
+        android.util.Log.d("PolyField", "Demo mode set to: $newMode")
         
         if (currentMode) { // Switching to live mode
             resetCalibration()
@@ -981,13 +971,8 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     if (result["success"] == true) {
                         android.util.Log.d("PolyField", "Auto-connect successful: ${result["message"]}")
                         
-                        // Register device with Go Mobile for EDM operations
-                        try {
-                            val goMobileResult = mobile.Mobile.registerUSBDevice("edm", edmDevice.deviceName)
-                            android.util.Log.d("PolyField", "Go Mobile device registration: $goMobileResult")
-                        } catch (e: Exception) {
-                            android.util.Log.w("PolyField", "Go Mobile registration failed but proceeding: ${e.message}")
-                        }
+                        // Device is now registered directly with native Kotlin EDMModule
+                        android.util.Log.d("PolyField", "Device registered with native EDMModule")
                         
                         // Update device with connection and real device name
                         val deviceState = DeviceState(
@@ -1064,10 +1049,10 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     if (deviceType == "edm") {
                         try {
                             val deviceName = result["edmDevice"] as? String ?: edmDevice.deviceName
-                            val goMobileResult = mobile.Mobile.registerUSBDevice(deviceType, deviceName)
-                            android.util.Log.d("PolyField", "Go Mobile device registration: $goMobileResult")
+                            // Device registration handled natively by EDMModule
+                            android.util.Log.d("PolyField", "Device registered with native EDMModule: $deviceName")
                         } catch (e: Exception) {
-                            android.util.Log.w("PolyField", "Go Mobile registration failed but proceeding: ${e.message}")
+                            android.util.Log.w("PolyField", "Device registration issue (continuing): ${e.message}")
                         }
                     }
                     
@@ -1181,11 +1166,11 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     
                     // Use Go Mobile's setCentre function which handles proper trigonometry
                     val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.e("PolyField", "🔵 Calling setCentreWithGoMobile with doubleRead: $isDoubleReadMode")
+                    android.util.Log.e("PolyField", "🔵 Calling setCentreNative with singleMode: ${!isDoubleReadMode}")
                     
-                    val result = edmModule.setCentreWithGoMobile("edm", _uiState.value.calibration.targetRadius, _uiState.value.calibration.circleType, isDoubleReadMode)
+                    val result = edmModule.setCentreNative("edm", _uiState.value.calibration.circleType, !isDoubleReadMode)
                     
-                    android.util.Log.e("PolyField", "🔵 Go Mobile setCentre result: $result")
+                    android.util.Log.e("PolyField", "🔵 Native setCentre result: $result")
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
@@ -1309,9 +1294,9 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     
                     // Use Go Mobile's verifyEdge function which calculates horizontal distance from centre
                     val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    val result = edmModule.verifyEdgeWithGoMobile("edm", targetRadius, isDoubleReadMode)
+                    val result = edmModule.verifyEdgeNative("edm", !isDoubleReadMode)
                     
-                    android.util.Log.d("PolyField", "Go Mobile verifyEdge result: $result")
+                    android.util.Log.d("PolyField", "Native verifyEdge result: $result")
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
@@ -1416,7 +1401,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     
                     // Use Go Mobile's measureThrow function for sector line (it's the same calculation)
                     val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    val result = edmModule.measureThrowWithGoMobile("edm", isDoubleReadMode)
+                    val result = edmModule.measureThrowNative("edm", !isDoubleReadMode)
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
@@ -1495,7 +1480,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             android.util.Log.d("PolyField", "🔵 measureDistance DEMO - Double read mode setting: $isDoubleReadMode")
             val distance = generateDemoThrow()
             _uiState.value = _uiState.value.copy(
-                measurement = String.format("%.2f m", distance),
+                measurement = String.format(java.util.Locale.UK, "%.2f m", distance),
                 isLoading = false
             )
             
@@ -1527,7 +1512,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                     // 3. Returns the calculated throw distance and coordinates
                     val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
                     android.util.Log.d("PolyField", "🔵 measureDistance LIVE - Double read mode setting: $isDoubleReadMode")
-                    val result = edmModule.measureThrowWithGoMobile("edm", isDoubleReadMode)
+                    val result = edmModule.measureThrowNative("edm", !isDoubleReadMode)
                     
                     if (result["success"] as Boolean) {
                         val goMobileResult = result["result"] as String
@@ -1558,7 +1543,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m beyond circle edge")
                         
                         _uiState.value = _uiState.value.copy(
-                            measurement = String.format("%.2f m", distance),
+                            measurement = String.format(java.util.Locale.UK, "%.2f m", distance),
                             isLoading = false
                         )
                         
@@ -1611,7 +1596,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             // Demo mode - use simulated values
             val windSpeed = (kotlin.random.Random.nextDouble() - 0.5) * 4.0 // ±2 m/s
             _uiState.value = _uiState.value.copy(
-                windMeasurement = String.format("%s%.1f m/s", if (windSpeed > 0) "+" else "", windSpeed),
+                windMeasurement = String.format(java.util.Locale.UK, "%s%.1f m/s", if (windSpeed > 0) "+" else "", windSpeed),
                 isLoading = false
             )
         } else {
@@ -1635,7 +1620,7 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                         android.util.Log.d("PolyField", "Wind reading successful: ${windSpeed}m/s")
                         
                         _uiState.value = _uiState.value.copy(
-                            windMeasurement = String.format("%s%.1f m/s", if (windSpeed > 0) "+" else "", windSpeed),
+                            windMeasurement = String.format(java.util.Locale.UK, "%s%.1f m/s", if (windSpeed > 0) "+" else "", windSpeed),
                             isLoading = false
                         )
                     } else {
@@ -1758,9 +1743,9 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
                 jsonArray.put(jsonObj)
             }
             
-            sharedPrefs.edit()
-                .putString("calibration_history", jsonArray.toString())
-                .apply()
+            sharedPrefs.edit { 
+                putString("calibration_history", jsonArray.toString()) 
+            }
                 
             android.util.Log.d("PolyField", "Saved ${calibrations.size} calibrations to persistent storage")
             
@@ -1792,30 +1777,13 @@ class AppViewModel(private val context: android.content.Context) : androidx.life
             )
         )
         
-        // CRITICAL: Sync Go Mobile internal state when loading historical calibration
+        // Sync native calibration manager state when loading historical calibration
         if (calibrationRecord.stationCoordinates != null) {
             val stationX = calibrationRecord.stationCoordinates!!.first
             val stationY = calibrationRecord.stationCoordinates!!.second
-            val result = mobile.Mobile.setCalibrationState(
-                "edm",
-                stationX,
-                stationY,
-                calibrationRecord.targetRadius,
-                calibrationRecord.circleType
-            )
-            android.util.Log.d("PolyField", "🔵 Synced Go Mobile state for historical calibration: $result")
-            
-            // Also sync edge verification result if available
-            if (calibrationRecord.edgeResult != null) {
-                val edgeResult = mobile.Mobile.setEdgeVerificationResult(
-                    "edm",
-                    calibrationRecord.edgeResult!!.averageRadius,
-                    calibrationRecord.edgeResult!!.deviation,
-                    5.0, // Standard tolerance for throws circles
-                    calibrationRecord.edgeResult!!.toleranceCheck
-                )
-                android.util.Log.d("PolyField", "🔵 Synced edge verification result: $edgeResult")
-            }
+            // Native calibration manager handles the state internally through the UI state
+            android.util.Log.d("PolyField", "🔵 Historical calibration loaded - station coordinates: ($stationX, $stationY)")
+            android.util.Log.d("PolyField", "🔵 Native calibration manager handles state internally")
         }
         
         android.util.Log.d("PolyField", "Loaded historical calibration: ${calibrationRecord.getDisplayName()}")
@@ -2333,7 +2301,12 @@ class MainActivityCompose : ComponentActivity() {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        registerReceiver(usbReceiver, filter)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            usbReceiver, 
+            filter, 
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         
         requestRuntimePermissions()
     }
@@ -2366,8 +2339,8 @@ class MainActivityCompose : ComponentActivity() {
         // Log all detected USB devices for debugging
         deviceList.values.forEach { device ->
             android.util.Log.d("PolyField", "USB Device found: ${device.productName ?: "Unknown"} " +
-                    "(VID: ${String.format("%04X", device.vendorId)}, " +
-                    "PID: ${String.format("%04X", device.productId)})")
+                    "(VID: ${String.format(java.util.Locale.UK, "%04X", device.vendorId)}, " +
+                    "PID: ${String.format(java.util.Locale.UK, "%04X", device.productId)})")
         }
         
         // Use the EDMModule to list USB devices (matches v16 approach)

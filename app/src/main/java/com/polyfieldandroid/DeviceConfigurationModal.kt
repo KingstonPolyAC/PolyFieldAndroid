@@ -35,7 +35,7 @@ fun DeviceConfigurationModal(
     var connectionType by remember(selectedDevice) { mutableStateOf(currentDevice.connectionType) }
     var serialPort by remember(selectedDevice) { mutableStateOf(currentDevice.serialPort) }
     var ipAddress by remember(selectedDevice) { mutableStateOf(currentDevice.ipAddress) }
-    var port by remember(selectedDevice) { mutableStateOf(currentDevice.port) }
+    var port by remember(selectedDevice) { mutableIntStateOf(currentDevice.port) }
     
     // Dropdown state for detected devices
     var expanded by remember { mutableStateOf(false) }

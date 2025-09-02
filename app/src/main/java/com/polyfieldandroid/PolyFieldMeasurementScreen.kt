@@ -252,14 +252,14 @@ fun SessionStatistics(
             StatItem(
                 label = "Longest",
                 value = if (throwCoordinates.isNotEmpty()) {
-                    String.format("%.1fm", throwCoordinates.maxOf { it.distance })
+                    String.format(java.util.Locale.UK, "%.1fm", throwCoordinates.maxOf { it.distance })
                 } else "0.0m"
             )
             
             StatItem(
                 label = "Average",
                 value = if (throwCoordinates.isNotEmpty()) {
-                    String.format("%.1fm", throwCoordinates.map { it.distance }.average())
+                    String.format(java.util.Locale.UK, "%.1fm", throwCoordinates.map { it.distance }.average())
                 } else "0.0m"
             )
         }

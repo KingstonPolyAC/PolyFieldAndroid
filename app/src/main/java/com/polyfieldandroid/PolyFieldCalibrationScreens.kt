@@ -300,7 +300,7 @@ fun CalibrationSetCentreScreenExact(
                     )
                     
                     Text(
-                        text = "Radius: ${String.format("%.4f", calibration.targetRadius)}m",
+                        text = "Radius: ${String.format(java.util.Locale.UK, "%.4f", calibration.targetRadius)}m",
                         fontSize = 18.sp,
                         color = Color(0xFF666666),
                         textAlign = TextAlign.Center
@@ -453,7 +453,7 @@ fun CalibrationSetCentreScreenExact(
             
             // Radius display
             Text(
-                text = "Radius: ${String.format("%.4f", calibration.targetRadius)}m",
+                text = "Radius: ${String.format(java.util.Locale.UK, "%.4f", calibration.targetRadius)}m",
                 fontSize = maxOf(18f, screenWidth * 0.022f).sp,
                 color = Color(0xFF666666),
                 textAlign = TextAlign.Center,
@@ -615,7 +615,7 @@ fun CalibrationVerifyEdgeScreenExact(
                 )
                 
                 Text(
-                    text = "Radius: ${String.format("%.4f", calibration.targetRadius)}m",
+                    text = "Radius: ${String.format(java.util.Locale.UK, "%.4f", calibration.targetRadius)}m",
                     fontSize = 16.sp,
                     color = Color(0xFF666666),
                     textAlign = TextAlign.Center,
@@ -676,8 +676,8 @@ fun CalibrationVerifyEdgeScreenExact(
                         
                         // Results details - simplified format
                         Text(
-                            text = "Measured radius: ${String.format("%.3f", result.averageRadius)}m\n" +
-                                   "Deviation: ${if (result.deviation >= 0) "+" else ""}${String.format("%.1f", result.deviation * 1000)}mm",
+                            text = "Measured radius: ${String.format(java.util.Locale.UK, "%.3f", result.averageRadius)}m\n" +
+                                   "Deviation: ${if (result.deviation >= 0) "+" else ""}${String.format(java.util.Locale.UK, "%.1f", result.deviation * 1000)}mm",
                             fontSize = 14.sp,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center,
