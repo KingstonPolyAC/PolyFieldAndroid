@@ -2653,9 +2653,11 @@ fun ProgressivePolyFieldApp(
     if (modeManager != null && competitionManager != null && athleteManager != null) {
         // Create measurement manager lazily when first accessed
         val finalMeasurementManager = measurementManager ?: run {
-            // Show that we're creating the measurement manager in background
             LaunchedEffect(Unit) {
                 isCreatingMeasurementManager = true
+                // Create in background
+                kotlinx.coroutines.delay(100) // Small delay to show loading
+                isCreatingMeasurementManager = false
             }
             
             remember {
@@ -2663,8 +2665,9 @@ fun ProgressivePolyFieldApp(
                 ViewModelProvider(
                     context,
                     CompetitionMeasurementManagerFactory(context, edm, athleteManager, competitionManager, modeManager)
-                ).get(CompetitionMeasurementManager::class.java).also {
-                    isCreatingMeasurementManager = false
+                ).get(CompetitionMeasurementManager::class.java).apply {
+                    // Sync initial demo mode state
+                    setDemoMode(appViewModel.uiState.value.isDemoMode)
                 }
             }
         }
@@ -2859,6 +2862,8 @@ fun PolyFieldApp(
             onBackClick = { navigateBack(viewModel, uiState) },
             onToggleDemoMode = { 
                 viewModel.toggleDemoMode()
+                // Sync demo mode with measurement manager
+                measurementManager?.setDemoMode(viewModel.uiState.value.isDemoMode)
                 // Refresh connected mode to load/unload demo events based on demo mode
                 if (uiState.currentScreen == "EVENT_SELECTION_CONNECTED") {
                     modeManager.setConnectedMode()
@@ -3085,6 +3090,20 @@ fun PolyFieldApp(
                         viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
                     }
                 }
+                "COMPETITION_RESULTS_CONNECTED" -> {
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        CompetitionResultsScreen(
+                            selectedEvent = selectedEvent,
+                            athleteManager = athleteManager,
+                            onBackToCompetition = {
+                                viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                            }
+                        )
+                    } ?: run {
+                        // Fallback if no event selected
+                        viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                    }
+                }
                 "DEVICE_SETUP" -> DeviceSetupScreenExact(
                     eventType = uiState.eventType,
                     devices = uiState.devices,
@@ -3254,9 +3273,15 @@ fun PolyFieldApp(
             canGoBack = canGoBack(uiState.currentScreen),
             canGoForward = canGoForward(uiState.currentScreen),
             showHeatMapButton = uiState.currentScreen == "MEASUREMENT" && uiState.eventType == "Throws",
+            showResultsButton = uiState.currentScreen.contains("COMPETITION") && 
+                              (uiState.currentScreen == "COMPETITION_ACTIVE_CONNECTED" || 
+                               uiState.currentScreen == "COMPETITION_MEASUREMENT_CONNECTED"),
             onBackClick = { navigateBack(viewModel, uiState) },
             onNextClick = { navigateForward(viewModel, uiState) },
             onHeatMapClick = { viewModel.toggleHeatMap() },
+            onResultsClick = { 
+                viewModel.updateScreen("COMPETITION_RESULTS_CONNECTED") 
+            },
             onNewEventClick = {
                 viewModel.resetSession()
                 viewModel.resetCalibration()
@@ -3509,6 +3534,8 @@ private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
             // Check if we came from calibration or direct from event selection
             if (uiState.eventType == "Throws") "CALIBRATION_SECTOR_LINE_CONNECTED" else "EVENT_SELECTION_CONNECTED"
         }
+        "COMPETITION_MEASUREMENT_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
+        "COMPETITION_RESULTS_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
         "CALIBRATION_SELECT_CIRCLE" -> "DEVICE_SETUP"
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_SELECT_CIRCLE"
         "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SET_CENTRE"

@@ -119,16 +119,16 @@ class ModeManagerViewModel(
      */
     private fun createDemoEvent(): PolyFieldApiClient.Event {
         val demoAthletes = listOf(
-            PolyFieldApiClient.Athlete(bib = "1", order = 1, name = "John Smith", club = "Athletics Club"),
-            PolyFieldApiClient.Athlete(bib = "2", order = 2, name = "Sarah Johnson", club = "Track Stars"),
-            PolyFieldApiClient.Athlete(bib = "3", order = 3, name = "Mike Davis", club = "Speed Demons"),
-            PolyFieldApiClient.Athlete(bib = "4", order = 4, name = "Emma Wilson", club = "Lightning Bolts"),
-            PolyFieldApiClient.Athlete(bib = "5", order = 5, name = "Chris Brown", club = "Thunder Throws"),
-            PolyFieldApiClient.Athlete(bib = "6", order = 6, name = "Lisa Garcia", club = "Power Athletes"),
-            PolyFieldApiClient.Athlete(bib = "7", order = 7, name = "David Miller", club = "Elite Track"),
-            PolyFieldApiClient.Athlete(bib = "8", order = 8, name = "Ashley Taylor", club = "Fast Feet"),
-            PolyFieldApiClient.Athlete(bib = "9", order = 9, name = "Ryan Anderson", club = "Velocity Vaults"),
-            PolyFieldApiClient.Athlete(bib = "10", order = 10, name = "Jessica Martinez", club = "Dynamic Throws")
+            PolyFieldApiClient.Athlete(bib = "101", order = 1, name = "John Smith", club = "Athletics Club"),
+            PolyFieldApiClient.Athlete(bib = "102", order = 2, name = "Sarah Johnson", club = "Track Stars"),
+            PolyFieldApiClient.Athlete(bib = "103", order = 3, name = "Mike Davis", club = "Speed Demons"),
+            PolyFieldApiClient.Athlete(bib = "104", order = 4, name = "Emma Wilson", club = "Lightning Bolts"),
+            PolyFieldApiClient.Athlete(bib = "105", order = 5, name = "Chris Brown", club = "Thunder Throws"),
+            PolyFieldApiClient.Athlete(bib = "106", order = 6, name = "Lisa Garcia", club = "Power Athletes"),
+            PolyFieldApiClient.Athlete(bib = "107", order = 7, name = "David Miller", club = "Elite Track"),
+            PolyFieldApiClient.Athlete(bib = "108", order = 8, name = "Ashley Taylor", club = "Fast Feet"),
+            PolyFieldApiClient.Athlete(bib = "109", order = 9, name = "Ryan Anderson", club = "Velocity Vaults"),
+            PolyFieldApiClient.Athlete(bib = "110", order = 10, name = "Jessica Martinez", club = "Dynamic Throws")
         )
         
         return PolyFieldApiClient.Event(

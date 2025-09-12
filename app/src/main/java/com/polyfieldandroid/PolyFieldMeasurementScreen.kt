@@ -298,9 +298,11 @@ fun BottomNavigationExact(
     canGoBack: Boolean,
     canGoForward: Boolean,
     showHeatMapButton: Boolean = false,
+    showResultsButton: Boolean = false,
     onBackClick: () -> Unit,
     onNextClick: () -> Unit,
     onHeatMapClick: () -> Unit = {},
+    onResultsClick: () -> Unit = {},
     onNewEventClick: () -> Unit
 ) {
     Card(
@@ -352,6 +354,27 @@ fun BottomNavigationExact(
                 ) {
                     Text(
                         text = "Heat Map",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(16.dp))
+            }
+            
+            // Results/Standings button (for competition screens)
+            if (showResultsButton) {
+                Button(
+                    onClick = onResultsClick,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF9C27B0) // Purple for standings
+                    )
+                ) {
+                    Text(
+                        text = "Results",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White

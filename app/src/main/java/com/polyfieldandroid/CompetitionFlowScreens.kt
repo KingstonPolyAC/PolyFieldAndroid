@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +50,8 @@ fun CompetitionAthleteScreen(
     val athleteState by athleteManager.athleteState.collectAsState()
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
+    val screenHeight = configuration.screenHeightDp
+    val isLandscape = screenWidth > screenHeight
     
     var showOnlyCheckedIn by remember { mutableStateOf(false) }
     
@@ -150,13 +155,35 @@ fun CompetitionAthleteScreen(
         
         Spacer(modifier = Modifier.height(12.dp))
         
-        // Athletes list
-        LazyColumn(
+        // Athletes list - compact layout: 1 column portrait, 2 columns landscape
+        val columns = if (isLandscape) 2 else 1
+        
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(bottom = 100.dp), // Bottom padding for navigation
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             items(displayedAthletes) { athlete ->
-                AthleteListItem(
+                // Get athlete performance data if available
+                val athleteResults = athleteState.athletes.find { it.bib == athlete.bib }
+                val currentPosition = if (athleteResults?.getBestMark() != null) {
+                    // Calculate position based on best marks within the displayed athletes context
+                    val rankedAthletes = displayedAthletes.mapNotNull { dispAthlete ->
+                        val results = athleteState.athletes.find { it.bib == dispAthlete.bib }
+                        results?.getBestMark()?.let { dispAthlete to results }
+                    }.sortedByDescending { (_, results) -> results.getBestMark() ?: 0.0 }
+                    
+                    val position = rankedAthletes.indexOfFirst { (dispAthlete, _) -> dispAthlete.bib == athlete.bib }
+                    if (position >= 0) position + 1 else null
+                } else null
+                
+                val bestMark = athleteResults?.getBestMark()?.let { 
+                    String.format("%.2fm", it) 
+                }
+                
+                AthleteGridItem(
                     athlete = athlete,
                     isCheckedIn = athleteState.checkedInAthletes.contains(athlete.bib),
                     onCheckInToggle = { 
@@ -165,13 +192,11 @@ fun CompetitionAthleteScreen(
                     onAthleteClick = { 
                         onAthleteSelected(athlete)
                     },
-                    screenWidth = screenWidth
+                    screenWidth = screenWidth,
+                    isCompactMode = isLandscape,
+                    currentPosition = currentPosition,
+                    bestMark = bestMark
                 )
-            }
-            
-            // Add bottom padding for navigation
-            item {
-                Spacer(modifier = Modifier.height(100.dp))
             }
         }
         
@@ -300,6 +325,471 @@ fun AthleteListItem(
                     fontWeight = FontWeight.Medium,
                     color = Color.White
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Compact athlete grid item for landscape mode and efficient space usage
+ * Shows bib number prominently and allows more athletes per screen
+ */
+@Composable
+fun AthleteGridItem(
+    athlete: PolyFieldApiClient.Athlete,
+    isCheckedIn: Boolean,
+    onCheckInToggle: () -> Unit,
+    onAthleteClick: () -> Unit,
+    screenWidth: Int,
+    isCompactMode: Boolean = false,
+    currentPosition: Int? = null, // Current ranking position when measurements exist
+    bestMark: String? = null // Best mark when measurements exist
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onAthleteClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCheckedIn) Color(0xFFE8F5E8) else Color.White
+        ),
+        shape = RoundedCornerShape(8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Position badge (when available)
+            if (currentPosition != null) {
+                Card(
+                    modifier = Modifier.size(28.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = when (currentPosition) {
+                            1 -> Color(0xFFFFD700) // Gold
+                            2 -> Color(0xFFC0C0C0) // Silver  
+                            3 -> Color(0xFFCD7F32) // Bronze
+                            else -> Color(0xFF9E9E9E) // Gray
+                        }
+                    ),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "$currentPosition",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            
+            // Bib number
+            Card(
+                modifier = Modifier.size(32.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isCheckedIn) Color(0xFF4CAF50) else Color(0xFF1976D2)
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = athlete.bib,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // Athlete info column
+            Column(modifier = Modifier.weight(1f)) {
+                // Name and order
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = athlete.name,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF333333),
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "#${athlete.order}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF666666)
+                    )
+                }
+                
+                // Club name
+                if (athlete.club.isNotEmpty()) {
+                    Text(
+                        text = athlete.club,
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666),
+                        maxLines = 1
+                    )
+                }
+                
+                // Best mark (when available)
+                if (bestMark != null && bestMark.isNotEmpty()) {
+                    Text(
+                        text = bestMark,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF1976D2)
+                    )
+                }
+            }
+            
+            // Compact check-in button
+            Button(
+                onClick = onCheckInToggle,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isCheckedIn) Color(0xFF4CAF50) else Color(0xFF1976D2)
+                ),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (isCheckedIn) R.drawable.settings_48px else R.drawable.person_48px
+                    ),
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (isCheckedIn) "✓" else "Check",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Competition Results and Standings Screen
+ * Shows all athletes with their current standings and performance
+ */
+@Composable
+fun CompetitionResultsScreen(
+    selectedEvent: PolyFieldApiClient.Event,
+    athleteManager: AthleteManagerViewModel,
+    onBackToCompetition: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val athleteState by athleteManager.athleteState.collectAsState()
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp
+    val screenHeight = configuration.screenHeightDp
+    val isLandscape = screenWidth > screenHeight
+    
+    // Get all athletes with performance data (including those without results)
+    val allAthletes = selectedEvent.athletes ?: emptyList()
+    val athletesWithData = allAthletes.map { athlete ->
+        val athleteResults = athleteState.athletes.find { it.bib == athlete.bib }
+        athlete to athleteResults
+    }
+    
+    // Sort athletes: those with results by performance, those without at the end
+    val sortedAthletes = athletesWithData.sortedWith { (_, results1), (_, results2) ->
+        val mark1 = results1?.getBestMark()
+        val mark2 = results2?.getBestMark()
+        when {
+            mark1 != null && mark2 != null -> mark2.compareTo(mark1) // Descending by performance
+            mark1 != null && mark2 == null -> -1 // Results first
+            mark1 == null && mark2 != null -> 1 // No results last
+            else -> 0 // Both null, maintain order
+        }
+    }
+    
+    val athletesWithResults = athletesWithData.filter { (_, results) -> results?.getBestMark() != null }
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // Header
+        Text(
+            text = "${translateEventName(selectedEvent.name)} - Results & Standings",
+            fontSize = maxOf(20f, screenWidth * 0.025f).sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF1976D2),
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+        
+        // Summary stats
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${allAthletes.size}",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1976D2)
+                    )
+                    Text(
+                        text = "Total Athletes",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${athletesWithResults.size}",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF4CAF50)
+                    )
+                    Text(
+                        text = "With Results",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val bestResult = athletesWithResults.firstOrNull()?.second?.getBestMark()
+                    Text(
+                        text = bestResult?.let { String.format("%.2fm", it) } ?: "—",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFF9800)
+                    )
+                    Text(
+                        text = "Best Mark",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+            }
+        }
+        
+        // Results list
+        if (athletesWithResults.isEmpty()) {
+            // Show "No Results Recorded" message
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "No Results Recorded",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF666666),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Athletes will appear here once measurements are recorded",
+                        fontSize = 14.sp,
+                        color = Color(0xFF666666),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+            
+            // Show all athletes with N/A positions
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(allAthletes.size) { index ->
+                    val athlete = allAthletes[index]
+                    
+                    ResultsListItem(
+                        position = null, // N/A position
+                        athlete = athlete,
+                        results = null, // No results
+                        screenWidth = screenWidth,
+                        isCompact = isLandscape
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(sortedAthletes.size) { index ->
+                    val (athlete, results) = sortedAthletes[index]
+                    val position = if (results?.getBestMark() != null) {
+                        // Calculate position among athletes with results
+                        athletesWithResults.indexOfFirst { (a, _) -> a.bib == athlete.bib } + 1
+                    } else {
+                        null // N/A for athletes without results
+                    }
+                    
+                    ResultsListItem(
+                        position = position,
+                        athlete = athlete,
+                        results = results,
+                        screenWidth = screenWidth,
+                        isCompact = isLandscape
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ResultsListItem(
+    position: Int?,
+    athlete: PolyFieldApiClient.Athlete,
+    results: CompetitionAthlete?,
+    screenWidth: Int,
+    isCompact: Boolean = false
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (position) {
+                1 -> Color(0xFFFFF8E1) // Gold background
+                2 -> Color(0xFFF5F5F5) // Silver background
+                3 -> Color(0xFFFFF3E0) // Bronze background
+                else -> Color.White
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Position badge
+            Card(
+                modifier = Modifier.size(32.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = when (position) {
+                        1 -> Color(0xFFFFD700) // Gold
+                        2 -> Color(0xFFC0C0C0) // Silver
+                        3 -> Color(0xFFCD7F32) // Bronze
+                        null -> Color(0xFFE0E0E0) // Light gray for N/A
+                        else -> Color(0xFF9E9E9E) // Gray
+                    }
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = position?.toString() ?: "N/A",
+                        fontSize = if (position == null) 10.sp else 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (position == null) Color(0xFF666666) else Color.White
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // Bib number
+            Card(
+                modifier = Modifier.size(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1976D2)
+                ),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = athlete.bib,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // Athlete details
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = athlete.name,
+                    fontSize = if (isCompact) 14.sp else 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF333333)
+                )
+                if (athlete.club.isNotEmpty()) {
+                    Text(
+                        text = athlete.club,
+                        fontSize = if (isCompact) 11.sp else 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+            }
+            
+            // Performance data
+            Column(
+                horizontalAlignment = Alignment.End
+            ) {
+                val bestMark = results?.getBestMark()
+                if (bestMark != null) {
+                    Text(
+                        text = String.format("%.2fm", bestMark),
+                        fontSize = if (isCompact) 16.sp else 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1976D2)
+                    )
+                    Text(
+                        text = "${results.getValidAttempts().size} attempts",
+                        fontSize = if (isCompact) 10.sp else 11.sp,
+                        color = Color(0xFF666666)
+                    )
+                } else {
+                    Text(
+                        text = "No results",
+                        fontSize = if (isCompact) 12.sp else 14.sp,
+                        color = Color(0xFF999999),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                }
             }
         }
     }
@@ -460,11 +950,17 @@ fun CompetitionMeasurementScreen(
             
             // Measurement interface
             MeasurementInterface(
-                measurement = measurementState.currentMeasurement,
-                isLoading = isLoading,
+                measurement = measurementState.currentMeasurement?.let { 
+                    if (it.isValid && it.distance != null) {
+                        String.format(java.util.Locale.UK, "%.2f m", it.distance)
+                    } else {
+                        "FOUL"
+                    }
+                } ?: "",
+                isLoading = false, // Simplified for now
                 onMeasure = {
                     scope.launch {
-                        measurementManager.takeMeasurement(currentAthlete.bib)
+                        measurementManager.measureThrow()
                     }
                 },
                 onRecordResult = { distance ->

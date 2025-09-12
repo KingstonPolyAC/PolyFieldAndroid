@@ -261,11 +261,11 @@ class DemoModeManager(private val context: Context) : ViewModel() {
             eventType = "SHOT",
             description = "Training scenario with varied skill levels",
             athletes = listOf(
-                DemoAthlete("T01", "Elite Athlete", "Pro Club", DemoSkillLevel.ELITE, 0.95f),
-                DemoAthlete("T02", "Experienced Thrower", "Regional Team", DemoSkillLevel.ADVANCED, 0.85f),
-                DemoAthlete("T03", "Club Athlete", "Local Club", DemoSkillLevel.INTERMEDIATE, 0.75f),
-                DemoAthlete("T04", "Junior Athlete", "Youth Team", DemoSkillLevel.INTERMEDIATE, 0.7f),
-                DemoAthlete("T05", "Beginner", "School Team", DemoSkillLevel.BEGINNER, 0.6f)
+                DemoAthlete("501", "Elite Athlete", "Pro Club", DemoSkillLevel.ELITE, 0.95f),
+                DemoAthlete("502", "Experienced Thrower", "Regional Team", DemoSkillLevel.ADVANCED, 0.85f),
+                DemoAthlete("503", "Club Athlete", "Local Club", DemoSkillLevel.INTERMEDIATE, 0.75f),
+                DemoAthlete("504", "Junior Athlete", "Youth Team", DemoSkillLevel.INTERMEDIATE, 0.7f),
+                DemoAthlete("505", "Beginner", "School Team", DemoSkillLevel.BEGINNER, 0.6f)
             ),
             settings = CompetitionSettings(
                 numberOfRounds = 3,
