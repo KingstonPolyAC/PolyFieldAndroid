@@ -351,7 +351,7 @@ fun BottomNavigationExact(
                     )
                 ) {
                     Text(
-                        text = "📊 Heat Map",
+                        text = "Heat Map",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -374,7 +374,11 @@ fun BottomNavigationExact(
                     )
                 ) {
                     Text(
-                        text = if (currentScreen == "MEASUREMENT") "New Event" else "Next →",
+                        text = when (currentScreen) {
+                            "MEASUREMENT" -> "New Event"
+                            "COMPETITION_ACTIVE_CONNECTED" -> "Start"
+                            else -> "Next →"
+                        },
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )

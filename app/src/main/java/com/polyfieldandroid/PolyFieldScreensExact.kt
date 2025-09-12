@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -201,7 +202,7 @@ fun SelectEventTypeScreenExact(
                     )
                 ) {
                     Text(
-                        text = "⚙️ Settings",
+                        text = "Settings",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -243,15 +244,20 @@ fun EventTypeCardExact(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Card icon
-            Text(
-                text = when (title) {
-                    "Throws" -> "🎯"
-                    "Horizontal Jumps" -> "🏃‍♂️"
-                    else -> "🏃‍♂️"
-                },
-                fontSize = 48.sp,
-                modifier = Modifier.padding(bottom = 15.dp)
+            // Material Design Icon
+            Icon(
+                painter = painterResource(
+                    when (title) {
+                        "Throws" -> R.drawable.sports_handball_48px
+                        "Horizontal Jumps" -> R.drawable.sprint_48px
+                        else -> R.drawable.sprint_48px
+                    }
+                ),
+                contentDescription = title,
+                modifier = Modifier
+                    .size(maxOf(64f, screenWidth * 0.08f).dp)
+                    .padding(bottom = 15.dp),
+                tint = Color(0xFF1976D2)
             )
             
             Text(

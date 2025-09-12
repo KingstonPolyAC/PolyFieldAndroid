@@ -1,8 +1,8 @@
-# PolyField Android v4.2
+# PolyField Android v4.5.1
 
 A Jetpack Compose Android application for athletic field measurement and validation, built to UK Athletics and WA standards as of 2025.
 
-## Latest Release - v4.2
+## Latest Release - v4.5.1
 
 ### Download Links
 - In Releases
@@ -98,13 +98,13 @@ go-mobile/mobile/
 4. **Tolerance Check**: Verify readings within 3mm difference
 5. **Average Result**: Return mean of both readings if valid
 
-### Sector Line Calibration (NEW in v4.1)
+### Sector Line Calibration
 1. **Check Mark Measurement**: Place prism on right-hand sector line
 2. **Coordinate Calculation**: Uses UKA/WA standard angle (17.46°)
 3. **Heat Map Integration**: Accurate sector line plotting from calibrated position
 4. **Visual Indicators**: Green lines and check mark on heat map
 
-### Calibration History System (NEW in v4.2)
+### Calibration History System
 1. **Automatic Storage**: Complete calibrations saved automatically after sector line measurement
 2. **Daily Filter**: Only shows calibrations from current date
 3. **Smart Selection**: Available at "Set Centre" screen with dropdown selection
@@ -130,13 +130,13 @@ go-mobile/mobile/
 
 ## Navigation Flow
 
-### Throws (8 screens) - **UPDATED in v4.1**
+### Throws (8 screens)
 1. Event Selection → 2. Circle Selection → 3. Device Setup → 4. Centre Calibration → 5. Edge Verification → 6. Edge Results → **7. Sector Line Check Mark** → 8. Measurement → 9. Heat Map
 
 ### Horizontal Jumps (3 screens)  
 1. Event Selection → 2. Device Setup → 3. Measurement
 
-## Heat Map Features (NEW in v4.1)
+## Heat Map Features
 
 ### Visualization
 - **Real Throw Data**: Uses actual measurement coordinates

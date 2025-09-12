@@ -19,6 +19,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -26,7 +28,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +49,7 @@ import androidx.compose.ui.graphics.drawscope.DrawStyle
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.*
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +64,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.ViewModelProvider
+
+data class ViewModelContainer(
+    val appViewModel: AppViewModel,
+    val modeManager: ModeManagerViewModel,
+    val competitionManager: CompetitionManagerViewModel,
+    val athleteManager: AthleteManagerViewModel,
+    val measurementManager: CompetitionMeasurementManager
+)
 
 // Device State
 data class DeviceState(
@@ -127,7 +142,6 @@ data class EdgeResult(
 
 // Settings data class
 data class AppSettings(
-    val isDoubleReadMode: Boolean = false,
     val selectedEDMDevice: EDMDeviceSpec = EDMDeviceRegistry.getDefaultDevice(),
     val serverIpAddress: String = "192.168.0.90",
     val serverPort: Int = 8080
@@ -147,17 +161,7 @@ data class SerialCommLogEntry(
     }
 }
 
-// Heat Map Data Classes
-data class ThrowCoordinate(
-    val x: Double,
-    val y: Double,
-    val distance: Double,
-    val circleType: String,
-    val timestamp: String,
-    val id: String,
-    val athleteId: String? = null,
-    val round: String? = null
-)
+// Heat Map Data Classes - Using shared ThrowCoordinate from CompetitionMeasurementManager
 
 data class HeatMapData(
     val coordinates: List<ThrowCoordinate>,
@@ -302,7 +306,7 @@ fun HeatMapScreen(
 ) {
     // Use actual throw coordinates and calibration data
     val heatMapData = remember(throwCoordinates, calibration) {
-        val filteredCoords = throwCoordinates.filter { it.circleType == calibration.circleType }
+        val filteredCoords = throwCoordinates // Use all coordinates
         
         if (filteredCoords.isEmpty()) {
             // Default scale based on event type
@@ -724,25 +728,94 @@ data class AppState(
     val debugCommStreamVisible: Boolean = false
 )
 
-class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewModel() {
+class AppViewModel(context: android.content.Context, private val fastInit: Boolean = false) : androidx.lifecycle.ViewModel() {
     private val _uiState = MutableStateFlow(AppState())
     val uiState: StateFlow<AppState> = _uiState.asStateFlow()
     
-    // EDM Module for device communication - use Application context to avoid memory leaks
-    private val edmModule = EDMModule(context.applicationContext)
+    // Clean EDM Interface for device communication - lazy init to avoid blocking startup
+    private var edmInterface: EDMInterface? = null
+    
+    // Legacy EDM Module for backward compatibility during transition  
+    private var edmModule: EDMModule? = null
+    
+    // Context reference for deferred initialization
+    private val appContext = context.applicationContext
     
     // SharedPreferences for persistent storage - use Application context to avoid memory leaks
     private val sharedPrefs = context.applicationContext.getSharedPreferences("PolyFieldCalibrations", android.content.Context.MODE_PRIVATE)
+    private val settingsPrefs = context.applicationContext.getSharedPreferences("PolyFieldSettings", android.content.Context.MODE_PRIVATE)
     
     init {
-        // Load calibration history on startup
-        loadCalibrationHistoryFromDisk()
-        
-        // Demo mode is now handled directly in Kotlin - no Go Mobile initialization needed
-        android.util.Log.d("PolyField", "Demo mode set to: ${_uiState.value.isDemoMode}")
-        
+        if (fastInit) {
+            // Fast initialization - only essential components
+            android.util.Log.d("PolyField", "AppViewModel fast initialization - heavy components deferred")
+            
+            // Load only critical settings immediately (blocking)
+            loadCriticalSettingsFromDisk()
+            
+            // Defer heavy operations to background
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                // Load remaining settings and calibration history
+                loadRemainingSettingsFromDisk()
+                loadCalibrationHistoryFromDisk()
+                
+                // Heavy modules initialized only when accessed
+            }
+        } else {
+            // Traditional full initialization for backward compatibility
+            viewModelScope.launch {
+                // Initialize heavy modules first
+                edmInterface = EDMInterface(appContext)
+                edmModule = EDMModule(appContext)
+                
+                // Load settings 
+                loadSettingsFromDisk()
+                
+                // Then load calibration history
+                loadCalibrationHistoryFromDisk()
+                
+                // Setup debug logger after startup
+                setupDebugLogger()
+            }
+            
+            android.util.Log.d("PolyField", "AppViewModel initialized - Settings will load asynchronously")
+        }
+    }
+    
+    // Null-safe getters for modules with lazy initialization
+    private fun getEDMInterface(): EDMInterface {
+        return edmInterface ?: run {
+            android.util.Log.d("PolyField", "Lazy initializing EDMInterface...")
+            EDMInterface(appContext).also { 
+                edmInterface = it
+                // Setup debug logger after EDM initialization
+                if (fastInit) {
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                        setupDebugLogger()
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun getEDMModule(): EDMModule {
+        return edmModule ?: run {
+            android.util.Log.d("PolyField", "Lazy initializing EDMModule...")
+            EDMModule(appContext).also { 
+                edmModule = it
+                // Setup debug logger after EDM initialization
+                if (fastInit) {
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                        setupDebugLogger()
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun setupDebugLogger() {
         // DEBUG: Setup serial communication logging (REMOVE WHEN DEBUG COMPLETE)
-        edmModule.setDebugLogger { direction, data, dataHex, success, error ->
+        getEDMModule().setDebugLogger { direction, data, dataHex, success, error ->
             val entry = SerialCommLogEntry(
                 direction = direction,
                 data = data,
@@ -870,8 +943,11 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
         _uiState.value = _uiState.value.copy(settings = settings)
         
         // Update EDM module with selected device
-        edmModule.setSelectedEDMDevice(settings.selectedEDMDevice)
+        getEDMModule().setSelectedEDMDevice(settings.selectedEDMDevice)
         android.util.Log.d("PolyField", "Updated EDM device to: ${settings.selectedEDMDevice.displayName}")
+        
+        // Save settings to persistent storage
+        saveSettingsToDisk()
     }
     
     // DEBUG: Serial Communication Logging Functions (REMOVE WHEN DEBUG COMPLETE)
@@ -894,7 +970,7 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
     }
     
     fun getUsbDevices(): Map<String, Any> {
-        return edmModule.listUsbDevices()
+        return getEDMModule().listUsbDevices()
     }
     
     fun refreshUsbDevices() {
@@ -967,7 +1043,7 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                 android.util.Log.d("PolyField", "Auto-connecting to EDM device: ${edmDevice.deviceName}")
                 
                 try {
-                    val result = edmModule.connectUsbDevice("edm", edmDevice.serialPath)
+                    val result = getEDMModule().connectUsbDevice("edm", edmDevice.serialPath)
                     if (result["success"] == true) {
                         android.util.Log.d("PolyField", "Auto-connect successful: ${result["message"]}")
                         
@@ -1007,13 +1083,16 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
             // In live mode, attempt actual device connection
             // Only set connected=true if connection succeeds
             connectToRealDevice(deviceType)
+        } else if (connected && _uiState.value.isDemoMode) {
+            // In demo mode, immediately set connected state without real device connection
+            updateDeviceConnectionState(deviceType, true)
+            android.util.Log.d("PolyField", "Demo mode: Set $deviceType to connected")
         } else if (!connected) {
             // Disconnect device
-            edmModule.disconnectDevice(deviceType)
+            getEDMModule().disconnectDevice(deviceType)
             // Update state to disconnected
             updateDeviceConnectionState(deviceType, false)
         }
-        // Note: For connection=true, state is updated in connectToRealDevice on success
     }
     
     private fun connectToRealDevice(deviceType: String) {
@@ -1037,7 +1116,7 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                 
                 android.util.Log.d("PolyField", "Connecting to detected EDM device: ${edmDevice.deviceName} at ${edmDevice.serialPath}")
                 
-                val result = edmModule.connectUsbDevice(deviceType, edmDevice.serialPath)
+                val result = getEDMModule().connectUsbDevice(deviceType, edmDevice.serialPath)
                 android.util.Log.d("PolyField", "Device connection result: $result")
                 
                 // Update connection status based on result
@@ -1164,55 +1243,11 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                     android.util.Log.e("PolyField", "🔵 STARTING Set Centre with Go Mobile...")
                     android.util.Log.e("PolyField", "🔵 EDM Device: ${_uiState.value.devices.edm.deviceName}, Port: ${_uiState.value.devices.edm.serialPort}")
                     
-                    // Use Go Mobile's setCentre function which handles proper trigonometry
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.e("PolyField", "🔵 Calling setCentreNative with singleMode: ${!isDoubleReadMode}")
+                    // Use clean EDM interface for centre setting
+                    android.util.Log.d("PolyField", "🔵 Calling setCentreClean")
                     
-                    val result = edmModule.setCentreNative("edm", _uiState.value.calibration.circleType, !isDoubleReadMode)
-                    
-                    android.util.Log.e("PolyField", "🔵 Native setCentre result: $result")
-                    
-                    if (result["success"] as Boolean) {
-                        val goMobileResult = result["result"] as String
-                        val jsonResult = JSONObject(goMobileResult)
-                        
-                        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        
-                        // CRITICAL: In live mode, ONLY use real coordinates from Go Mobile - NO fallbacks or simulation
-                        if (!jsonResult.has("stationX") || !jsonResult.has("stationY")) {
-                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile setCentre missing station coordinates - REFUSING to use simulation in live mode")
-                            showErrorDialog(
-                                "Centre Set Failed",
-                                "Go Mobile did not return station coordinates. Cannot proceed without real EDM data."
-                            )
-                            _uiState.value = _uiState.value.copy(isLoading = false)
-                            return@launch
-                        }
-                        
-                        // Extract REAL station coordinates from Go Mobile result (no fallbacks allowed)
-                        val stationX = jsonResult.getDouble("stationX")
-                        val stationY = jsonResult.getDouble("stationY")
-                        
-                        android.util.Log.d("PolyField", "Centre set successfully with REAL Go Mobile calculations")
-                        android.util.Log.d("PolyField", "REAL station coordinates from EDM: X=$stationX, Y=$stationY")
-                        
-                        _uiState.value = _uiState.value.copy(
-                            calibration = _uiState.value.calibration.copy(
-                                centreSet = true,
-                                centreTimestamp = timestamp,
-                                stationCoordinates = Pair(stationX, stationY)
-                            ),
-                            isLoading = false
-                        )
-                    } else {
-                        val error = result["error"] as? String ?: "Failed to set centre"
-                        android.util.Log.e("PolyField", "Failed to set centre with Go Mobile: $error")
-                        showErrorDialog(
-                            "Centre Set Failed",
-                            error
-                        )
-                        _uiState.value = _uiState.value.copy(isLoading = false)
-                    }
+                    setCentreClean()
+                    return@launch
                 } catch (e: Exception) {
                     android.util.Log.e("PolyField", "Centre setting error", e)
                     showErrorDialog(
@@ -1292,61 +1327,9 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                     android.util.Log.d("PolyField", "Verifying edge with Go Mobile trigonometric calculations...")
                     android.util.Log.d("PolyField", "Target radius: ${targetRadius}m")
                     
-                    // Use Go Mobile's verifyEdge function which calculates horizontal distance from centre
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    val result = edmModule.verifyEdgeNative("edm", !isDoubleReadMode)
-                    
-                    android.util.Log.d("PolyField", "Native verifyEdge result: $result")
-                    
-                    if (result["success"] as Boolean) {
-                        val goMobileResult = result["result"] as String
-                        val jsonResult = JSONObject(goMobileResult)
-                        
-                        // CRITICAL: In live mode, ONLY use real measurements from Go Mobile - NO fallbacks or simulation
-                        val measuredRadius = if (jsonResult.has("measuredRadius")) {
-                            jsonResult.getDouble("measuredRadius")
-                        } else if (jsonResult.has("averageRadius")) {
-                            jsonResult.getDouble("averageRadius")  
-                        } else {
-                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile verifyEdge missing radius measurement - REFUSING to use simulation in live mode")
-                            showErrorDialog(
-                                "Edge Verification Failed",
-                                "Go Mobile did not return measured radius. Cannot proceed without real EDM measurement."
-                            )
-                            _uiState.value = _uiState.value.copy(isLoading = false)
-                            return@launch
-                        }
-                        val deviation = kotlin.math.abs(measuredRadius - targetRadius)
-                        
-                        // Different tolerances per UKA/WA rules
-                        val tolerance = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 0.010 else 0.005 // 10mm for javelin, 5mm for others
-                        val toleranceCheck = deviation <= tolerance
-                        
-                        android.util.Log.d("PolyField", "Edge verification: measured=${measuredRadius}m, target=${targetRadius}m, deviation=${deviation*1000}mm, pass=${toleranceCheck}")
-                        
-                        val edgeResult = EdgeResult(
-                            toleranceCheck = toleranceCheck,
-                            measurements = listOf(measuredRadius),
-                            averageRadius = measuredRadius,
-                            deviation = deviation
-                        )
-                        
-                        _uiState.value = _uiState.value.copy(
-                            calibration = _uiState.value.calibration.copy(
-                                edgeVerified = true,  // Edge verification completed successfully (measurement obtained)
-                                edgeResult = edgeResult  // Contains toleranceCheck for pass/fail status
-                            ),
-                            isLoading = false
-                        )
-                    } else {
-                        val error = result["error"] as? String ?: "Failed to verify edge"
-                        android.util.Log.e("PolyField", "Edge verification failed with Go Mobile: $error")
-                        showErrorDialog(
-                            "Edge Verification Failed",
-                            error
-                        )
-                        _uiState.value = _uiState.value.copy(isLoading = false)
-                    }
+                    // Use clean EDM interface for edge verification
+                    verifyEdgeClean()
+                    return@launch
                 } catch (e: Exception) {
                     android.util.Log.e("PolyField", "Edge verification error", e)
                     showErrorDialog(
@@ -1399,66 +1382,9 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                 try {
                     android.util.Log.d("PolyField", "Measuring sector line with Go Mobile calculations...")
                     
-                    // Use Go Mobile's measureThrow function for sector line (it's the same calculation)
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    val result = edmModule.measureThrowNative("edm", !isDoubleReadMode)
-                    
-                    if (result["success"] as Boolean) {
-                        val goMobileResult = result["result"] as String
-                        val jsonResult = JSONObject(goMobileResult)
-                        
-                        // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
-                        // Extract the total distance from center first
-                        val totalDistance = if (jsonResult.has("distance")) {
-                            jsonResult.getDouble("distance")
-                        } else if (jsonResult.has("distanceFromCentre")) {
-                            jsonResult.getDouble("distanceFromCentre") 
-                        } else {
-                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile measureThrow missing distance measurement - REFUSING to use simulation in live mode")
-                            showErrorDialog(
-                                "Sector Line Measurement Failed",
-                                "Go Mobile did not return distance measurement. Cannot proceed without real EDM data."
-                            )
-                            _uiState.value = _uiState.value.copy(isLoading = false)
-                            return@launch
-                        }
-                        
-                        android.util.Log.d("PolyField", "Sector line measurement successful with Go Mobile: ${totalDistance}m from center")
-                        
-                        // Calculate distance beyond circle edge (distance from center minus circle radius)
-                        val targetRadius = _uiState.value.calibration.targetRadius
-                        val distanceBeyondCircle = totalDistance - targetRadius
-                        
-                        android.util.Log.d("PolyField", "Sector line: ${totalDistance}m from center, ${distanceBeyondCircle}m beyond circle edge (radius: ${targetRadius}m)")
-                        
-                        // Calculate sector line coordinates based on UKA/WA angles
-                        // Shot/Discus/Hammer: 34.92° total (17.46° each side), Javelin: 28.96° total (14.48° each side)
-                        val sectorAngleDegrees = if (_uiState.value.calibration.circleType == "JAVELIN_ARC") 14.48 else 17.46
-                        val sectorLineCoordinates = Pair(
-                            totalDistance * kotlin.math.sin(Math.toRadians(sectorAngleDegrees)),
-                            totalDistance * kotlin.math.cos(Math.toRadians(sectorAngleDegrees))
-                        )
-                        
-                        _uiState.value = _uiState.value.copy(
-                            calibration = _uiState.value.calibration.copy(
-                                sectorLineSet = true,
-                                sectorLineDistance = distanceBeyondCircle,  // Store distance beyond circle edge
-                                sectorLineCoordinates = sectorLineCoordinates
-                            ),
-                            isLoading = false
-                        )
-                        
-                        // Save complete calibration to history
-                        saveCurrentCalibrationToHistory()
-                    } else {
-                        val error = result["error"] as? String ?: "Failed to measure sector line"
-                        android.util.Log.e("PolyField", "Sector line measurement failed with Go Mobile: $error")
-                        showErrorDialog(
-                            "Sector Line Measurement Failed",
-                            error
-                        )
-                        _uiState.value = _uiState.value.copy(isLoading = false)
-                    }
+                    // Use clean EDM interface for sector line measurement
+                    sectorCheckClean()
+                    return@launch
                 } catch (e: Exception) {
                     android.util.Log.e("PolyField", "Sector line measurement error", e)
                     showErrorDialog(
@@ -1476,8 +1402,7 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
         
         if (_uiState.value.isDemoMode) {
             // Demo mode - use simulated values
-            val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-            android.util.Log.d("PolyField", "🔵 measureDistance DEMO - Double read mode setting: $isDoubleReadMode")
+            android.util.Log.d("PolyField", "🔵 measureDistance DEMO - Using single read mode")
             val distance = generateDemoThrow()
             _uiState.value = _uiState.value.copy(
                 measurement = String.format(java.util.Locale.UK, "%.2f m", distance),
@@ -1510,73 +1435,9 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
                     // 1. Gets EDM data from our serial communication
                     // 2. Applies proper trigonometric calculations (horizontal distance from centre minus radius)
                     // 3. Returns the calculated throw distance and coordinates
-                    val isDoubleReadMode = _uiState.value.settings.isDoubleReadMode
-                    android.util.Log.d("PolyField", "🔵 measureDistance LIVE - Double read mode setting: $isDoubleReadMode")
-                    val result = edmModule.measureThrowNative("edm", !isDoubleReadMode)
-                    
-                    if (result["success"] as Boolean) {
-                        val goMobileResult = result["result"] as String
-                        val jsonResult = JSONObject(goMobileResult)
-                        
-                        // CRITICAL: In live mode, ONLY use real distance from Go Mobile - NO fallbacks or simulation
-                        val distance = if (jsonResult.has("distanceBeyondCircle")) {
-                            jsonResult.getDouble("distanceBeyondCircle")
-                        } else if (jsonResult.has("distance")) {
-                            // Fallback: calculate distance beyond circle from total distance
-                            val totalDistance = jsonResult.getDouble("distance")
-                            totalDistance - _uiState.value.calibration.targetRadius
-                        } else if (jsonResult.has("throwDistance")) {
-                            // Fallback: calculate distance beyond circle from throw distance
-                            val totalDistance = jsonResult.getDouble("throwDistance")
-                            totalDistance - _uiState.value.calibration.targetRadius
-                        } else {
-                            android.util.Log.e("PolyField", "CRITICAL: Go Mobile measureThrow missing distance field - REFUSING to use simulation in live mode")
-                            android.util.Log.e("PolyField", "Go Mobile result: $goMobileResult")
-                            showErrorDialog(
-                                "Measurement Error",
-                                "Go Mobile did not return distance measurement. Cannot proceed without real EDM data."
-                            )
-                            _uiState.value = _uiState.value.copy(isLoading = false)
-                            return@launch
-                        }
-                        
-                        android.util.Log.d("PolyField", "Go Mobile measurement successful: ${distance}m beyond circle edge")
-                        
-                        _uiState.value = _uiState.value.copy(
-                            measurement = String.format(java.util.Locale.UK, "%.2f m", distance),
-                            isLoading = false
-                        )
-                        
-                        // Extract coordinates from Go Mobile result for heat map
-                        // CRITICAL: Only add coordinates if Go Mobile provides them - NO simulation fallbacks
-                        if (jsonResult.has("x") && jsonResult.has("y")) {
-                            val throwX = jsonResult.getDouble("x")
-                            val throwY = jsonResult.getDouble("y")
-                            val throwCoord = ThrowCoordinate(
-                                x = throwX,
-                                y = throwY, 
-                                distance = distance,
-                                circleType = _uiState.value.calibration.circleType,
-                                timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
-                                id = java.util.UUID.randomUUID().toString()
-                            )
-                            
-                            _uiState.value = _uiState.value.copy(
-                                throwCoordinates = _uiState.value.throwCoordinates + throwCoord
-                            )
-                            
-                            android.util.Log.d("PolyField", "Real throw coordinate added: x=${throwX}, y=${throwY}, distance=${distance}m")
-                        }
-                        
-                    } else {
-                        val error = result["error"] as? String ?: "Failed to measure distance"
-                        android.util.Log.e("PolyField", "Go Mobile measurement failed: $error")
-                        showErrorDialog(
-                            "Measurement Error", 
-                            error
-                        )
-                        _uiState.value = _uiState.value.copy(isLoading = false)
-                    }
+                    android.util.Log.d("PolyField", "🔵 measureDistance LIVE - Using clean EDM interface")
+                    measureDistanceClean()
+                    return@launch
                 } catch (e: Exception) {
                     android.util.Log.e("PolyField", "Measurement error", e)
                     showErrorDialog(
@@ -1613,7 +1474,7 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
             viewModelScope.launch {
                 try {
                     android.util.Log.d("PolyField", "Getting real wind reading...")
-                    val reading = edmModule.measureWind()
+                    val reading = getEDMModule().measureWind()
                     
                     if (reading.success && reading.windSpeed != null) {
                         val windSpeed = reading.windSpeed
@@ -1658,6 +1519,183 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
             )
         )
         android.util.Log.d("PolyField", "Edge verification reset - centre preserved")
+    }
+    
+    // ========== CLEAN EDM INTERFACE FUNCTIONS ==========
+    // These use the new simplified EDMInterface for clean communication
+    
+    /**
+     * Set centre using clean EDM interface
+     */
+    fun setCentreClean() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        
+        viewModelScope.launch {
+            try {
+                val circleType = _uiState.value.calibration.circleType
+                android.util.Log.d("PolyField", "Setting centre with clean EDM interface for circle: $circleType")
+                
+                val result = getEDMInterface().setCentre("edm", circleType)
+                if (result.isSuccess) {
+                    val data = result.getOrThrow()
+                    android.util.Log.d("PolyField", "Clean set centre successful: $data")
+                    
+                    val edmPosition = data["edmPosition"] as Map<String, Double>
+                    val stationX = edmPosition["x"]!!
+                    val stationY = edmPosition["y"]!!
+                    
+                    _uiState.value = _uiState.value.copy(
+                        calibration = _uiState.value.calibration.copy(
+                            centreSet = true,
+                            stationCoordinates = Pair(stationX, stationY)
+                        ),
+                        isLoading = false
+                    )
+                } else {
+                    android.util.Log.e("PolyField", "Clean set centre failed", result.exceptionOrNull())
+                    showErrorDialog("Calibration Error", result.exceptionOrNull()?.message ?: "Failed to set centre")
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PolyField", "Set centre error", e)
+                showErrorDialog("Device Error", "Failed to set centre: ${e.message}")
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+    
+    /**
+     * Verify edge using clean EDM interface
+     */
+    fun verifyEdgeClean() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("PolyField", "Verifying edge with clean EDM interface")
+                
+                val result = getEDMInterface().verifyEdge("edm")
+                if (result.isSuccess) {
+                    val data = result.getOrThrow()
+                    android.util.Log.d("PolyField", "Clean verify edge successful: $data")
+                    
+                    val toleranceCheck = data["isInTolerance"] as Boolean
+                    val measuredRadius = data["measuredRadius"] as Double
+                    val differenceMm = data["differenceMm"] as Double
+                    val message = data["message"] as String
+                    
+                    val edgeResult = EdgeResult(
+                        toleranceCheck = toleranceCheck,
+                        averageRadius = measuredRadius,
+                        deviation = differenceMm / 1000.0 // Convert mm to meters
+                    )
+                    
+                    _uiState.value = _uiState.value.copy(
+                        calibration = _uiState.value.calibration.copy(
+                            edgeVerified = true,
+                            edgeResult = edgeResult
+                        ),
+                        isLoading = false
+                    )
+                } else {
+                    android.util.Log.e("PolyField", "Clean verify edge failed", result.exceptionOrNull())
+                    showErrorDialog("Verification Error", result.exceptionOrNull()?.message ?: "Failed to verify edge")
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PolyField", "Verify edge error", e)
+                showErrorDialog("Device Error", "Failed to verify edge: ${e.message}")
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+    
+    /**
+     * Measure throw distance using clean EDM interface
+     */
+    fun measureDistanceClean() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("PolyField", "Measuring distance with clean EDM interface")
+                
+                val result = getEDMInterface().measure("edm")
+                if (result.isSuccess) {
+                    val data = result.getOrThrow()
+                    android.util.Log.d("PolyField", "Clean measure successful: $data")
+                    
+                    val throwDistance = data["throwDistance"] as Double
+                    val throwCoordinates = data["throwCoordinates"] as Map<String, Double>
+                    val measurementText = data["measurement"] as String
+                    
+                    // Create ThrowCoordinate for the measurement
+                    val throwCoord = ThrowCoordinate(
+                        x = throwCoordinates["x"]!!,
+                        y = throwCoordinates["y"]!!,
+                        distance = throwDistance,
+                        round = 1,
+                        attemptNumber = 1,
+                        isValid = true
+                    )
+                    
+                    _uiState.value = _uiState.value.copy(
+                        measurement = measurementText,
+                        throwCoordinates = listOf(throwCoord),
+                        isLoading = false
+                    )
+                } else {
+                    android.util.Log.e("PolyField", "Clean measure failed", result.exceptionOrNull())
+                    showErrorDialog("Measurement Error", result.exceptionOrNull()?.message ?: "Failed to measure distance")
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PolyField", "Measure distance error", e)
+                showErrorDialog("Device Error", "Failed to measure distance: ${e.message}")
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+    
+    /**
+     * Perform sector check using clean EDM interface
+     */
+    fun sectorCheckClean() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("PolyField", "Performing sector check with clean EDM interface")
+                
+                val result = getEDMInterface().sectorCheck("edm")
+                if (result.isSuccess) {
+                    val data = result.getOrThrow()
+                    android.util.Log.d("PolyField", "Clean sector check successful: $data")
+                    
+                    val sectorCoordinates = data["sectorCoordinates"] as Map<String, Double>
+                    val distanceFromCenter = data["distanceFromCenter"] as Double
+                    val measurement = data["measurement"] as String
+                    val message = data["message"] as String
+                    
+                    _uiState.value = _uiState.value.copy(
+                        calibration = _uiState.value.calibration.copy(
+                            sectorLineSet = true,
+                            sectorLineDistance = distanceFromCenter,
+                            sectorLineCoordinates = Pair(sectorCoordinates["x"]!!, sectorCoordinates["y"]!!)
+                        ),
+                        isLoading = false
+                    )
+                } else {
+                    android.util.Log.e("PolyField", "Clean sector check failed", result.exceptionOrNull())
+                    showErrorDialog("Sector Check Error", result.exceptionOrNull()?.message ?: "Failed to perform sector check")
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PolyField", "Sector check error", e)
+                showErrorDialog("Device Error", "Failed to perform sector check: ${e.message}")
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
     }
     
     // Calibration History Management
@@ -1797,6 +1835,96 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
         )
     }
     
+    /**
+     * Load settings from persistent storage
+     */
+    private fun loadSettingsFromDisk() {
+        try {
+            val serverIpAddress = settingsPrefs.getString("serverIpAddress", "192.168.0.90") ?: "192.168.0.90"
+            val serverPort = settingsPrefs.getInt("serverPort", 8080)
+            val isDemoMode = settingsPrefs.getBoolean("isDemoMode", false)
+            
+            val loadedSettings = _uiState.value.settings.copy(
+                serverIpAddress = serverIpAddress,
+                serverPort = serverPort
+            )
+            
+            _uiState.value = _uiState.value.copy(
+                settings = loadedSettings,
+                isDemoMode = isDemoMode
+            )
+            
+            android.util.Log.d("PolyField", "Loaded settings from disk - Server: $serverIpAddress:$serverPort")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Error loading settings from disk: ${e.message}")
+        }
+    }
+    
+    /**
+     * Load only critical settings immediately for fast startup
+     */
+    private fun loadCriticalSettingsFromDisk() {
+        try {
+            // Load only essential settings needed for immediate UI
+            val isDemoMode = settingsPrefs.getBoolean("isDemoMode", false)
+            
+            _uiState.value = _uiState.value.copy(
+                isDemoMode = isDemoMode
+            )
+            
+            android.util.Log.d("PolyField", "Loaded critical settings - Demo mode: $isDemoMode")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Error loading critical settings: ${e.message}")
+        }
+    }
+    
+    /**
+     * Load remaining settings in background for fast startup
+     */
+    private fun loadRemainingSettingsFromDisk() {
+        try {
+            val serverIpAddress = settingsPrefs.getString("serverIpAddress", "192.168.0.90") ?: "192.168.0.90"
+            val serverPort = settingsPrefs.getInt("serverPort", 8080)
+            
+            val loadedSettings = _uiState.value.settings.copy(
+                serverIpAddress = serverIpAddress,
+                serverPort = serverPort
+            )
+            
+            _uiState.value = _uiState.value.copy(
+                settings = loadedSettings
+            )
+            
+            android.util.Log.d("PolyField", "Loaded remaining settings - Server: $serverIpAddress:$serverPort")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Error loading remaining settings: ${e.message}")
+        }
+    }
+    
+    /**
+     * Save settings to persistent storage
+     */
+    private fun saveSettingsToDisk() {
+        try {
+            with(settingsPrefs.edit()) {
+                val settings = _uiState.value.settings
+                val uiState = _uiState.value
+                putString("serverIpAddress", settings.serverIpAddress)
+                putInt("serverPort", settings.serverPort)
+                putBoolean("isDemoMode", uiState.isDemoMode)
+                apply()
+            }
+            
+            android.util.Log.d("PolyField", "Saved settings to disk - Server: ${_uiState.value.settings.serverIpAddress}:${_uiState.value.settings.serverPort}")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("PolyField", "Error saving settings to disk: ${e.message}")
+        }
+    }
+    
     fun toggleDeviceSetupModal(deviceType: String? = null) {
         _uiState.value = _uiState.value.copy(
             deviceSetupVisible = !_uiState.value.deviceSetupVisible,
@@ -1857,9 +1985,9 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
             x = x,
             y = y,
             distance = actualDistance,
-            circleType = _uiState.value.calibration.circleType,
-            timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
-            id = java.util.UUID.randomUUID().toString()
+            round = 1, // Default round 
+            attemptNumber = 1, // Default attempt
+            isValid = true
         )
     }
 }
@@ -1869,12 +1997,10 @@ class AppViewModel(context: android.content.Context) : androidx.lifecycle.ViewMo
 @Composable
 fun SettingsScreen(
     isDemoMode: Boolean,
-    isDoubleReadMode: Boolean,
     selectedEDMDevice: EDMDeviceSpec,
     serverIpAddress: String,
     serverPort: Int,
     onDemoModeToggle: () -> Unit,
-    onDoubleReadModeToggle: (Boolean) -> Unit,
     onEDMDeviceChange: (EDMDeviceSpec) -> Unit,
     onServerSettingsChange: (String, Int) -> Unit,
     onBackClick: () -> Unit,
@@ -1947,7 +2073,7 @@ fun SettingsScreen(
                         )
                     }
                     
-                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    HorizontalDivider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                     
                     // EDM Device Selection
                     Column {
@@ -2020,42 +2146,6 @@ fun SettingsScreen(
                         )
                     }
                     
-                    // Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                    
-                    // HIDDEN: Single/Double Read Toggle - disabled for now
-                    /*
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "EDM Read Mode",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF333333)
-                            )
-                            Text(
-                                text = if (isDoubleReadMode) "Double read with tolerance" else "Single read only",
-                                fontSize = 14.sp,
-                                color = Color(0xFF666666)
-                            )
-                        }
-                        Switch(
-                            checked = isDoubleReadMode,
-                            onCheckedChange = onDoubleReadModeToggle,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = Color(0xFF1976D2),
-                                uncheckedThumbColor = Color.White,
-                                uncheckedTrackColor = Color(0xFF999999)
-                            )
-                        )
-                    }
-                    
-                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                    */
                     
                     // Server Settings
                     Column {
@@ -2146,7 +2236,7 @@ fun SettingsScreen(
                         .padding(16.dp)
                 ) {
                     Text(
-                        text = "🔧 DEBUG: Serial Communication Monitor",
+                        text = "DEBUG: Serial Communication Monitor",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF856404),
@@ -2245,16 +2335,12 @@ class MainActivityCompose : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        viewModel = AppViewModel(this)
-        initializeUSB()
-        
+        // Show splash screen IMMEDIATELY with zero initialization
         setContent {
             PolyFieldTheme {
-                PolyFieldApp(viewModel = viewModel)
+                ZeroDelayApp()
             }
         }
-        
-        checkConnectedUSBDevices()
     }
     
     override fun onDestroy() {
@@ -2482,25 +2568,302 @@ fun PolyFieldTheme(content: @Composable () -> Unit) {
     )
 }
 
-// Main App Composable
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PolyFieldApp(viewModel: AppViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
-    val configuration = LocalConfiguration.current
+fun ZeroDelayApp() {
+    val context = LocalContext.current as MainActivityCompose
+    var showSplash by remember { mutableStateOf(true) }
+    
+    // Progressive initialization state
+    var appViewModel by remember { mutableStateOf<AppViewModel?>(null) }
+    var modeManager by remember { mutableStateOf<ModeManagerViewModel?>(null) }
+    var competitionManager by remember { mutableStateOf<CompetitionManagerViewModel?>(null) }
+    var athleteManager by remember { mutableStateOf<AthleteManagerViewModel?>(null) }
+    var measurementManager by remember { mutableStateOf<CompetitionMeasurementManager?>(null) }
+    
+    // Show splash for minimum 200ms, then start progressive loading
+    LaunchedEffect(Unit) {
+        // Minimum splash duration for smooth UX
+        kotlinx.coroutines.delay(200)
+        showSplash = false
+        
+        // Start progressive background initialization
+        launch(kotlinx.coroutines.Dispatchers.Default) {
+            // Phase 1: Critical ViewModels first (lightweight initialization)
+            appViewModel = AppViewModel(context, fastInit = true)
+            
+            // Phase 2: Secondary ViewModels
+            launch {
+                competitionManager = ViewModelProvider(context, CompetitionManagerViewModelFactory(context))
+                    .get(CompetitionManagerViewModel::class.java)
+            }
+            launch {
+                athleteManager = ViewModelProvider(context, AthleteManagerViewModelFactory(context))
+                    .get(AthleteManagerViewModel::class.java)
+            }
+            
+            // Phase 3: Mode manager depends on app view model
+            appViewModel?.let { appVM ->
+                modeManager = ViewModelProvider(context, ModeManagerViewModelFactory(context, appVM))
+                    .get(ModeManagerViewModel::class.java)
+            }
+            
+            // Phase 4: Heavy operations last (deferred until needed)
+            // EDM Module and measurement manager created lazily when first accessed
+        }
+    }
+    
+    if (showSplash) {
+        SplashScreen()
+    } else {
+        // Show main app with progressive loading states
+        appViewModel?.let { appVM ->
+            ProgressivePolyFieldApp(
+                appViewModel = appVM,
+                modeManager = modeManager,
+                competitionManager = competitionManager,
+                athleteManager = athleteManager,
+                measurementManager = measurementManager,
+                context = context
+            )
+        } ?: run {
+            // Fallback loading state if AppViewModel isn't ready yet
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        }
+    }
+}
+
+@Composable
+fun ProgressivePolyFieldApp(
+    appViewModel: AppViewModel,
+    modeManager: ModeManagerViewModel?,
+    competitionManager: CompetitionManagerViewModel?,
+    athleteManager: AthleteManagerViewModel?,
+    measurementManager: CompetitionMeasurementManager?,
+    context: MainActivityCompose
+) {
+    // Lazy EDM Module creation - only when needed
+    var edmModule by remember { mutableStateOf<EDMModule?>(null) }
+    var isCreatingMeasurementManager by remember { mutableStateOf(false) }
+    
+    if (modeManager != null && competitionManager != null && athleteManager != null) {
+        // Create measurement manager lazily when first accessed
+        val finalMeasurementManager = measurementManager ?: run {
+            // Show that we're creating the measurement manager in background
+            LaunchedEffect(Unit) {
+                isCreatingMeasurementManager = true
+            }
+            
+            remember {
+                val edm = edmModule ?: EDMModule(context).also { edmModule = it }
+                ViewModelProvider(
+                    context,
+                    CompetitionMeasurementManagerFactory(context, edm, athleteManager, competitionManager, modeManager)
+                ).get(CompetitionMeasurementManager::class.java).also {
+                    isCreatingMeasurementManager = false
+                }
+            }
+        }
+        
+        // Show loading overlay if still creating heavy components
+        Box {
+            PolyFieldApp(
+                viewModel = appViewModel,
+                modeManager = modeManager,
+                competitionManager = competitionManager,
+                athleteManager = athleteManager,
+                measurementManager = finalMeasurementManager
+            )
+            
+            // Show loading overlay for heavy operations
+            if (isCreatingMeasurementManager) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Initializing device communication...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        // Show loading state with partial UI
+        ProgressiveLoadingScreen(
+            appViewModel = appViewModel,
+            modeManager = modeManager,
+            competitionManager = competitionManager,
+            athleteManager = athleteManager
+        )
+    }
+}
+
+@Composable
+fun ProgressiveLoadingScreen(
+    appViewModel: AppViewModel,
+    modeManager: ModeManagerViewModel?,
+    competitionManager: CompetitionManagerViewModel?,
+    athleteManager: AthleteManagerViewModel?
+) {
+    val uiState by appViewModel.uiState.collectAsState()
     
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // Show header immediately
+        PolyFieldHeaderExact(
+            currentScreen = uiState.currentScreen,
+            isDemoMode = uiState.isDemoMode,
+            canGoBack = canGoBack(uiState.currentScreen),
+            onBackClick = { navigateBack(appViewModel, uiState) },
+            onToggleDemoMode = { appViewModel.toggleDemoMode() }
+        )
+        
+        // Show loading states for components that aren't ready
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                val loadingMessages = mutableListOf<String>()
+                if (modeManager == null) loadingMessages.add("Mode management")
+                if (competitionManager == null) loadingMessages.add("Competition setup")
+                if (athleteManager == null) loadingMessages.add("Athlete management")
+                
+                Text(
+                    text = if (loadingMessages.isEmpty()) {
+                        "Finalizing setup..."
+                    } else {
+                        "Loading ${loadingMessages.joinToString(", ")}..."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+// Main App Composable
+@OptIn(ExperimentalMaterial3Api::class)
+
+@Composable
+fun SplashScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(32.dp)
+        ) {
+            // Logo - using vector drawable
+            Image(
+                painter = painterResource(R.drawable.app_logo_vector),
+                contentDescription = "PolyField Logo",
+                modifier = Modifier.size(120.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // App Name
+            Text(
+                text = "PolyField",
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2)
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Subtitle
+            Text(
+                text = "Track & Field Competition Manager",
+                fontSize = 16.sp,
+                color = Color(0xFF666666),
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(40.dp))
+            
+            // Attribution
+            Text(
+                text = "Built by Kingston Athletic Club\n& Polytechnic Harriers",
+                fontSize = 14.sp,
+                color = Color(0xFF888888),
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Loading indicator
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color(0xFF1976D2),
+                strokeWidth = 2.dp
+            )
+        }
+    }
+}
+
+@Composable
+fun PolyFieldApp(
+    viewModel: AppViewModel,
+    modeManager: ModeManagerViewModel,
+    competitionManager: CompetitionManagerViewModel,
+    athleteManager: AthleteManagerViewModel,
+    measurementManager: CompetitionMeasurementManager
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val modeState by modeManager.modeState.collectAsState()
+    val configuration = LocalConfiguration.current
+    
+    // Force recomposition on orientation changes to prevent UI artifacts
+    key(configuration.orientation) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
         // Header
         PolyFieldHeaderExact(
             currentScreen = uiState.currentScreen,
             isDemoMode = uiState.isDemoMode,
             canGoBack = canGoBack(uiState.currentScreen),
             onBackClick = { navigateBack(viewModel, uiState) },
-            onToggleDemoMode = { viewModel.toggleDemoMode() }
+            onToggleDemoMode = { 
+                viewModel.toggleDemoMode()
+                // Refresh connected mode to load/unload demo events based on demo mode
+                if (uiState.currentScreen == "EVENT_SELECTION_CONNECTED") {
+                    modeManager.setConnectedMode()
+                }
+            }
         )
         
         // Main Content
@@ -2513,12 +2876,215 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 "SELECT_EVENT_TYPE" -> SelectEventTypeScreenExact(
                     onEventSelected = { eventType ->
                         viewModel.updateEventType(eventType)
-                        viewModel.updateScreen("DEVICE_SETUP")
+                        // Set connected mode to load demo events if demo mode is enabled
+                        modeManager.setConnectedMode()
+                        viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
                     },
                     onSettingsClick = {
                         viewModel.updateScreen("SETTINGS")
                     }
                 )
+                "MODE_SELECTION" -> {
+                    ModeSelectionScreen(
+                        modeManager = modeManager,
+                        onModeSelected = { mode ->
+                            when (mode) {
+                                AppMode.STANDALONE -> {
+                                    // Continue with existing flow
+                                    viewModel.updateScreen("DEVICE_SETUP")
+                                }
+                                AppMode.CONNECTED -> {
+                                    // Switch to connected mode flow
+                                    modeManager.setConnectedMode()
+                                    viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                                }
+                            }
+                        }
+                    )
+                }
+                "EVENT_SELECTION_CONNECTED" -> {
+                    EventSelectionScreen(
+                        modeManager = modeManager,
+                        onEventSelected = { event ->
+                            // First, set event type and circle type
+                            val eventType = determineEventTypeFromEvent(event)
+                            val circleType = getCircleTypeFromEvent(event)
+                            viewModel.updateEventType(eventType)
+                            viewModel.updateCircleType(circleType)
+                            
+                            // Then select the event in competition manager
+                            competitionManager.selectEvent(event)
+                            
+                            // Load athletes from the selected event
+                            athleteManager.loadAthletesFromEvent(event)
+                            
+                            // Navigate to device setup for calibration (throws) or direct to athlete checking (jumps)
+                            if (eventType == "Throws") {
+                                viewModel.updateScreen("DEVICE_SETUP_CONNECTED")
+                            } else {
+                                viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                            }
+                        },
+                        onStandAloneSelected = {
+                            // Switch to standalone mode and navigate to device setup
+                            modeManager.setStandaloneMode()
+                            viewModel.updateScreen("DEVICE_SETUP")
+                        },
+                        onBackToMode = {
+                            viewModel.updateScreen("SELECT_EVENT_TYPE")
+                        },
+                        onEditServer = {
+                            viewModel.updateScreen("SETTINGS")
+                        }
+                    )
+                }
+                "DEVICE_SETUP_CONNECTED" -> DeviceSetupScreenExact(
+                    eventType = uiState.eventType,
+                    devices = uiState.devices,
+                    isDemoMode = uiState.isDemoMode,
+                    onConnectDevice = { deviceType ->
+                        viewModel.updateDeviceConnection(deviceType, !uiState.devices.let {
+                            when (deviceType) {
+                                "edm" -> it.edm.connected
+                                "wind" -> it.wind.connected
+                                "scoreboard" -> it.scoreboard.connected
+                                else -> false
+                            }
+                        })
+                    },
+                    onToggleDeviceSetupModal = { deviceType -> viewModel.toggleDeviceSetupModal(deviceType) },
+                    onContinue = {
+                        // Same validation logic as standalone mode
+                        if (!uiState.isDemoMode && uiState.eventType == "Throws" && !uiState.devices.edm.connected) {
+                            viewModel.showErrorDialog(
+                                "Device Required",
+                                "EDM device must be connected to proceed in live mode. Please connect your EDM device or switch to demo mode."
+                            )
+                        } else {
+                            // For connected mode, continue to calibration for throws
+                            val nextScreen = if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE_CONNECTED" else "COMPETITION_ACTIVE_CONNECTED"
+                            viewModel.updateScreen(nextScreen)
+                        }
+                    }
+                )
+                "CALIBRATION_SELECT_CIRCLE_CONNECTED" -> {
+                    // Pre-select circle type based on event
+                    val selectedEvent = competitionManager.competitionState.collectAsState().value.selectedEvent
+                    val preSelectedCircle = selectedEvent?.let { getCircleTypeForEvent(it) } ?: ""
+                    
+                    // Auto-select the circle if we can determine it from the event
+                    if (preSelectedCircle.isNotEmpty() && uiState.calibration.circleType.isEmpty()) {
+                        LaunchedEffect(selectedEvent) {
+                            viewModel.updateCircleType(preSelectedCircle)
+                            viewModel.updateScreen("CALIBRATION_SET_CENTRE_CONNECTED")
+                        }
+                    }
+                    
+                    CalibrationSelectCircleScreenExact(
+                        selectedCircle = uiState.calibration.circleType,
+                        onCircleSelected = { circleType ->
+                            viewModel.updateCircleType(circleType)
+                            viewModel.updateScreen("CALIBRATION_SET_CENTRE_CONNECTED")
+                        }
+                    )
+                }
+                "CALIBRATION_SET_CENTRE_CONNECTED" -> CalibrationSetCentreScreenExact(
+                    calibration = uiState.calibration,
+                    isLoading = uiState.isLoading,
+                    availableCalibrations = viewModel.getTodaysCalibrations(),
+                    onSetCentre = { 
+                        viewModel.setCentre()
+                    },
+                    onResetCentre = { 
+                        viewModel.resetCalibration()
+                        viewModel.updateCircleType(uiState.calibration.circleType)
+                    },
+                    onLoadHistoricalCalibration = { calibrationRecord ->
+                        viewModel.loadHistoricalCalibration(calibrationRecord)
+                    }
+                )
+                "CALIBRATION_VERIFY_EDGE_CONNECTED" -> CalibrationVerifyEdgeScreenExact(
+                    calibration = uiState.calibration,
+                    isLoading = uiState.isLoading,
+                    onVerifyEdge = { 
+                        viewModel.verifyEdge()
+                    },
+                    onResetEdge = { 
+                        viewModel.verifyEdge()  // Remeasure button triggers new reading
+                    }
+                )
+                "CALIBRATION_SECTOR_LINE_CONNECTED" -> CalibrationSectorLineScreen(
+                    calibration = uiState.calibration,
+                    isLoading = uiState.isLoading,
+                    onMeasureSectorLine = { 
+                        viewModel.measureSectorLine()
+                    },
+                    onContinue = {
+                        viewModel.saveCurrentCalibrationToHistory()
+                        viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                    }
+                )
+                "COMPETITION_SETUP_CONNECTED" -> {
+                    // This screen is now unused - keeping for backward compatibility
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        CompetitionSetupScreenConnected(
+                            selectedEvent = selectedEvent,
+                            modeManager = modeManager,
+                            onSetupComplete = { 
+                                viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                            },
+                            onBackToEvents = {
+                                viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                            }
+                        )
+                    } ?: run {
+                        // Fallback if no event selected
+                        viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                    }
+                }
+                "COMPETITION_ACTIVE_CONNECTED" -> {
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        CompetitionAthleteScreen(
+                            selectedEvent = selectedEvent,
+                            athleteManager = athleteManager,
+                            onAthleteSelected = { athlete ->
+                                // Navigate directly to this athlete for measurement
+                                athleteManager.selectAthlete(athlete)
+                                measurementManager.startCompetitionWithAthlete(athlete)
+                                viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
+                            },
+                            onStartCompetition = {
+                                // Start competition with all checked-in athletes
+                                measurementManager.startCompetition()
+                                viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
+                            }
+                        )
+                    } ?: run {
+                        // Fallback if no event selected
+                        viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                    }
+                }
+                "COMPETITION_MEASUREMENT_CONNECTED" -> {
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        CompetitionMeasurementScreen(
+                            selectedEvent = selectedEvent,
+                            athleteManager = athleteManager,
+                            measurementManager = measurementManager,
+                            modeManager = modeManager,
+                            onBackToAthletes = {
+                                viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                            },
+                            onEndCompetition = {
+                                // Reset competition and go back to event selection
+                                measurementManager.endCompetition()
+                                viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                            }
+                        )
+                    } ?: run {
+                        // Fallback if no event selected
+                        viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                    }
+                }
                 "DEVICE_SETUP" -> DeviceSetupScreenExact(
                     eventType = uiState.eventType,
                     devices = uiState.devices,
@@ -2549,7 +3115,6 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 )
                 "CALIBRATION_SELECT_CIRCLE" -> CalibrationSelectCircleScreenExact(
                     selectedCircle = uiState.calibration.circleType,
-                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onCircleSelected = { circleType ->
                         viewModel.updateCircleType(circleType)
                     }
@@ -2570,7 +3135,6 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 "CALIBRATION_VERIFY_EDGE" -> CalibrationVerifyEdgeScreenExact(
                     calibration = uiState.calibration,
                     isLoading = uiState.isLoading,
-                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     onVerifyEdge = { viewModel.verifyEdge() },
                     onResetEdge = { 
                         viewModel.verifyEdge()  // Changed: Remeasure button now triggers new reading instead of just resetting
@@ -2603,14 +3167,10 @@ fun PolyFieldApp(viewModel: AppViewModel) {
                 )
                 "SETTINGS" -> SettingsScreen(
                     isDemoMode = uiState.isDemoMode,
-                    isDoubleReadMode = uiState.settings.isDoubleReadMode,
                     selectedEDMDevice = uiState.settings.selectedEDMDevice,
                     serverIpAddress = uiState.settings.serverIpAddress,
                     serverPort = uiState.settings.serverPort,
                     onDemoModeToggle = { viewModel.toggleDemoMode() },
-                    onDoubleReadModeToggle = { enabled ->
-                        viewModel.updateSettings(uiState.settings.copy(isDoubleReadMode = enabled))
-                    },
                     onEDMDeviceChange = { edmDevice ->
                         viewModel.updateSettings(uiState.settings.copy(selectedEDMDevice = edmDevice))
                     },
@@ -2705,6 +3265,7 @@ fun PolyFieldApp(viewModel: AppViewModel) {
         )
         }
     }
+    } // End key block for orientation change recomposition
 }
 
 // Helper functions for navigation and UI state
@@ -2728,8 +3289,12 @@ private fun canGoBack(screen: String): Boolean {
 
 private fun canGoForward(screen: String): Boolean {
     return when (screen) {
-        "SELECT_EVENT_TYPE", "DEVICE_SETUP", "CALIBRATION_SELECT_CIRCLE", 
-        "CALIBRATION_SET_CENTRE", "CALIBRATION_VERIFY_EDGE", "CALIBRATION_SECTOR_LINE" -> true
+        "SELECT_EVENT_TYPE", "DEVICE_SETUP", "DEVICE_SETUP_CONNECTED", 
+        "CALIBRATION_SELECT_CIRCLE", "CALIBRATION_SELECT_CIRCLE_CONNECTED",
+        "CALIBRATION_SET_CENTRE", "CALIBRATION_SET_CENTRE_CONNECTED",
+        "CALIBRATION_VERIFY_EDGE", "CALIBRATION_VERIFY_EDGE_CONNECTED",
+        "CALIBRATION_SECTOR_LINE", "CALIBRATION_SECTOR_LINE_CONNECTED",
+        "COMPETITION_ACTIVE_CONNECTED" -> true
         "HEAT_MAP" -> false // Remove next button from heat map
         else -> false
     }
@@ -2737,6 +3302,44 @@ private fun canGoForward(screen: String): Boolean {
 
 private fun showBottomNavigation(screen: String): Boolean {
     return screen != "SELECT_EVENT_TYPE" && screen != "SETTINGS" // Hide on initial screen and settings
+}
+
+/**
+ * Determine event type from selected event for calibration purposes
+ */
+private fun determineEventTypeFromEvent(event: PolyFieldApiClient.Event): String {
+    val eventName = event.name.lowercase()
+    val eventType = event.type.lowercase()
+    
+    return when {
+        // Throwing events
+        eventName.contains("discus") || eventName.contains("hammer") || 
+        eventName.contains("javelin") || eventName.contains("shot") || 
+        eventName.contains("weight") || eventType.contains("throw") -> "Throws"
+        
+        // Jumping events  
+        eventName.contains("jump") || eventName.contains("vault") -> "Jumps"
+        
+        // Default to throws if uncertain
+        else -> "Throws"
+    }
+}
+
+/**
+ * Get the appropriate circle type based on the selected event
+ */
+private fun getCircleTypeForEvent(event: PolyFieldApiClient.Event): String {
+    val eventName = event.name.lowercase()
+    val eventType = event.type.lowercase()
+    
+    return when {
+        eventName.contains("discus") || eventType.contains("discus") -> "DISCUS_CIRCLE"
+        eventName.contains("hammer") || eventType.contains("hammer") -> "HAMMER_CIRCLE"
+        eventName.contains("shot") || eventType.contains("shot") -> "SHOT_CIRCLE"
+        eventName.contains("weight") || eventType.contains("weight") -> "WEIGHT_CIRCLE"
+        eventName.contains("javelin") || eventType.contains("javelin") -> "JAVELIN_RUNWAY"
+        else -> "DISCUS_CIRCLE" // Default fallback
+    }
 }
 
 // DEBUG: Serial Communication Monitor Screen (REMOVE WHEN DEBUG COMPLETE)
@@ -2774,7 +3377,7 @@ fun DebugSerialCommScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "🔧 Serial Communication Monitor",
+                    text = "Serial Communication Monitor",
                     fontSize = maxOf(20f, screenWidth * 0.025f).sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -2893,7 +3496,19 @@ fun DebugSerialCommScreen(
 
 private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
     val previousScreen = when (uiState.currentScreen) {
+        "MODE_SELECTION" -> "SELECT_EVENT_TYPE"
         "DEVICE_SETUP" -> "SELECT_EVENT_TYPE"
+        "EVENT_SELECTION_CONNECTED" -> "SELECT_EVENT_TYPE"
+        "DEVICE_SETUP_CONNECTED" -> "EVENT_SELECTION_CONNECTED"
+        "CALIBRATION_SELECT_CIRCLE_CONNECTED" -> "DEVICE_SETUP_CONNECTED"
+        "CALIBRATION_SET_CENTRE_CONNECTED" -> "CALIBRATION_SELECT_CIRCLE_CONNECTED"
+        "CALIBRATION_VERIFY_EDGE_CONNECTED" -> "CALIBRATION_SET_CENTRE_CONNECTED"
+        "CALIBRATION_SECTOR_LINE_CONNECTED" -> "CALIBRATION_VERIFY_EDGE_CONNECTED"
+        "COMPETITION_SETUP_CONNECTED" -> "EVENT_SELECTION_CONNECTED"
+        "COMPETITION_ACTIVE_CONNECTED" -> {
+            // Check if we came from calibration or direct from event selection
+            if (uiState.eventType == "Throws") "CALIBRATION_SECTOR_LINE_CONNECTED" else "EVENT_SELECTION_CONNECTED"
+        }
         "CALIBRATION_SELECT_CIRCLE" -> "DEVICE_SETUP"
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_SELECT_CIRCLE"
         "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SET_CENTRE"
@@ -2911,13 +3526,33 @@ private fun navigateForward(viewModel: AppViewModel, uiState: AppState) {
     val nextScreen = when (uiState.currentScreen) {
         "SELECT_EVENT_TYPE" -> "DEVICE_SETUP"
         "DEVICE_SETUP" -> if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE" else "MEASUREMENT"
+        "DEVICE_SETUP_CONNECTED" -> {
+            // Same validation logic as the onContinue callback
+            if (!uiState.isDemoMode && uiState.eventType == "Throws" && !uiState.devices.edm.connected) {
+                viewModel.showErrorDialog(
+                    "Device Required",
+                    "EDM device must be connected to proceed in live mode. Please connect your EDM device or switch to demo mode."
+                )
+                uiState.currentScreen // Don't advance if device not connected in live mode
+            } else {
+                if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE_CONNECTED" else "COMPETITION_ACTIVE_CONNECTED"
+            }
+        }
         "CALIBRATION_SELECT_CIRCLE" -> {
             if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE" 
             else uiState.currentScreen // Don't advance if no circle selected
         }
+        "CALIBRATION_SELECT_CIRCLE_CONNECTED" -> {
+            if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE_CONNECTED" 
+            else uiState.currentScreen // Don't advance if no circle selected
+        }
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_VERIFY_EDGE"
+        "CALIBRATION_SET_CENTRE_CONNECTED" -> "CALIBRATION_VERIFY_EDGE_CONNECTED"
         "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SECTOR_LINE"
+        "CALIBRATION_VERIFY_EDGE_CONNECTED" -> "CALIBRATION_SECTOR_LINE_CONNECTED"
         "CALIBRATION_SECTOR_LINE" -> "MEASUREMENT"
+        "CALIBRATION_SECTOR_LINE_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
+        "COMPETITION_ACTIVE_CONNECTED" -> "COMPETITION_MEASUREMENT_CONNECTED"
         else -> uiState.currentScreen
     }
     viewModel.updateScreen(nextScreen)

@@ -38,7 +38,6 @@ fun formatTimestamp(timestamp: String?): String {
 @Composable
 fun CalibrationSelectCircleScreenExact(
     selectedCircle: String,
-    isDoubleReadMode: Boolean,
     onCircleSelected: (String) -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -328,7 +327,7 @@ fun CalibrationSetCentreScreenExact(
                                 calibration.centreSet -> "✓ Centre Set"
                                 else -> "Set Centre"
                             },
-                            fontSize = if (calibration.centreSet) 14.sp else 20.sp,
+                            fontSize = if (calibration.centreSet) 42.sp else 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             textAlign = TextAlign.Center
@@ -344,6 +343,8 @@ fun CalibrationSetCentreScreenExact(
                         ) {
                             Text(
                                 text = "Reset Centre",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = Color(0xFFF44336)
                             )
                         }
@@ -576,7 +577,6 @@ fun CalibrationSetCentreScreenExact(
 fun CalibrationVerifyEdgeScreenExact(
     calibration: CalibrationState,
     isLoading: Boolean,
-    isDoubleReadMode: Boolean,
     onVerifyEdge: () -> Unit,
     onResetEdge: () -> Unit
 ) {
@@ -630,15 +630,14 @@ fun CalibrationVerifyEdgeScreenExact(
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
                 )
                 
-                if (!isDoubleReadMode) {
-                    Text(
-                        text = "Single read mode - No 3mm comparison check",
-                        fontSize = 14.sp,
-                        color = Color(0xFF1976D2),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                    )
-                }
+                // Single read mode with tolerance checking
+                Text(
+                    text = "Single read with tolerance checking",
+                    fontSize = 14.sp,
+                    color = Color(0xFF1976D2),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                )
             }
         }
         
@@ -667,7 +666,7 @@ fun CalibrationVerifyEdgeScreenExact(
                         // Pass/Fail indicator
                         Text(
                             text = if (result.toleranceCheck) "PASS - In Tolerance" else "FAIL - OUT OF TOLERANCE",
-                            fontSize = 24.sp,
+                            fontSize = 48.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (result.toleranceCheck) Color(0xFF4CAF50) else Color(0xFFF44336),
                             textAlign = TextAlign.Center,

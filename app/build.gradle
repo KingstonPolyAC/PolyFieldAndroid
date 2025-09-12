@@ -10,9 +10,10 @@ repositories {
     maven { url 'https://jitpack.io' }
 }
 
-// Temporarily build without React Native integration
+// Pure Kotlin Android app - no React Native
 
 def enableProguardInReleaseBuilds = true
+def enableMinifyInDebug = false  // Disable minification in debug for faster builds
 def enableSeparateBuildPerCPUArchitecture = false
 
 android {
@@ -24,8 +25,8 @@ android {
         applicationId "com.polyfieldandroid"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 43
-        versionName "4.2"
+        versionCode 44
+        versionName "4.5.1"
     }
     
     buildFeatures {
@@ -33,12 +34,12 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
     
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
     }
     
     composeOptions {
@@ -63,6 +64,7 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            minifyEnabled enableMinifyInDebug
         }
         release {
             signingConfig signingConfigs.release
@@ -79,11 +81,6 @@ android {
             enable enableSeparateBuildPerCPUArchitecture
             universalApk false
             include "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
-        }
-    }
-    packaging {
-        jniLibs {
-            pickFirsts += ['**/armeabi-v7a/libc++_shared.so', '**/x86/libc++_shared.so', '**/arm64-v8a/libc++_shared.so', '**/x86_64/libc++_shared.so', '**/x86/libjsc.so', '**/armeabi-v7a/libjsc.so']
         }
     }
 
@@ -107,17 +104,24 @@ dependencies {
     implementation 'androidx.compose.runtime:runtime'
     implementation 'androidx.compose.foundation:foundation'
     implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.compose.material:material-icons-extended'
     
     // AndroidX Core (2025 latest stable)
     implementation 'androidx.core:core-ktx:1.15.0'
+    
+    // AppCompat for compatibility themes
+    implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
     
-    // USB and permissions
-    implementation 'androidx.appcompat:appcompat:1.6.1'
     
     // USB Serial communication for EDM devices
     implementation 'com.github.mik3y:usb-serial-for-android:3.7.0'
+    
+    // Networking and HTTP client for server integration
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'androidx.work:work-runtime-ktx:2.9.0'
+    
     
     // Optional - for debugging
     debugImplementation 'androidx.compose.ui:ui-tooling'

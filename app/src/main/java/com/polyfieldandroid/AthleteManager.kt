@@ -1,0 +1,491 @@
+package com.polyfieldandroid
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * Enhanced Athlete data model for competition management
+ */
+data class CompetitionAthlete(
+    val bib: String,
+    val order: Int,
+    val name: String,
+    val club: String,
+    val isSelected: Boolean = true, // Whether athlete is selected for competition
+    val currentBestMark: Double? = null, // Best mark in meters
+    val attempts: MutableList<AthleteAttempt> = mutableListOf(),
+    val heatmapData: MutableList<ThrowCoordinate> = mutableListOf(), // Individual heatmap data
+    val isAdvancing: Boolean = false // Whether athlete advances to next round
+) {
+    fun getDisplayName(): String = "$bib - $name ($club)"
+    
+    fun getCurrentRoundAttempts(round: Int): List<AthleteAttempt> {
+        return attempts.filter { it.round == round }
+    }
+    
+    fun getValidAttempts(): List<AthleteAttempt> {
+        return attempts.filter { it.isValid && it.distance != null }
+    }
+    
+    fun getBestMark(): Double? {
+        return getValidAttempts().maxByOrNull { it.distance ?: 0.0 }?.distance
+    }
+    
+    fun getAttemptCount(round: Int): Int {
+        return getCurrentRoundAttempts(round).size
+    }
+}
+
+/**
+ * Individual attempt data
+ */
+data class AthleteAttempt(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val round: Int,
+    val attemptNumber: Int,
+    val distance: Double? = null, // Distance in meters
+    val windSpeed: Double? = null, // Wind speed in m/s
+    val isValid: Boolean = true,
+    val timestamp: Long = System.currentTimeMillis(),
+    val coordinates: ThrowCoordinate? = null // Landing coordinates for heatmap
+) {
+    fun getDisplayMark(): String = when {
+        !isValid -> "FOUL"
+        distance != null -> String.format("%.2f m", distance)
+        else -> "—"
+    }
+}
+
+// ThrowCoordinate moved to shared data classes
+
+/**
+ * Athlete management state
+ */
+data class AthleteManagementState(
+    val athletes: List<CompetitionAthlete> = emptyList(),
+    val selectedAthletes: List<CompetitionAthlete> = emptyList(),
+    val checkedInAthletes: Set<String> = emptySet(), // Set of bib numbers
+    val currentAthleteIndex: Int = 0,
+    val currentAthlete: CompetitionAthlete? = null,
+    val rotationOrder: List<CompetitionAthlete> = emptyList(),
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null
+)
+
+/**
+ * ViewModel for managing athletes in competition
+ */
+class AthleteManagerViewModel(private val context: Context) : ViewModel() {
+    
+    companion object {
+        private const val TAG = "AthleteManager"
+        private const val PREFS_NAME = "polyfield_athlete_prefs"
+        private const val PREF_MANUAL_ATHLETES = "manual_athletes"
+        private const val PREF_ATHLETE_RESULTS = "athlete_results"
+    }
+    
+    private val preferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val gson = Gson()
+    
+    // State management
+    private val _athleteState = MutableStateFlow(AthleteManagementState())
+    val athleteState: StateFlow<AthleteManagementState> = _athleteState.asStateFlow()
+    
+    init {
+        loadSavedAthletes()
+    }
+    
+    /**
+     * Load athletes from server event data
+     */
+    fun loadAthletesFromEvent(event: PolyFieldApiClient.Event) {
+        viewModelScope.launch {
+            try {
+                _athleteState.value = _athleteState.value.copy(isLoading = true)
+                
+                val athletes = event.athletes?.mapIndexed { index, serverAthlete ->
+                    CompetitionAthlete(
+                        bib = serverAthlete.bib,
+                        order = serverAthlete.order,
+                        name = serverAthlete.name,
+                        club = serverAthlete.club,
+                        isSelected = true // All athletes selected by default
+                    )
+                }?.sortedBy { it.order } ?: emptyList()
+                
+                _athleteState.value = _athleteState.value.copy(
+                    athletes = athletes,
+                    selectedAthletes = athletes.filter { it.isSelected },
+                    rotationOrder = athletes.filter { it.isSelected },
+                    isLoading = false,
+                    errorMessage = null
+                )
+                
+                Log.d(TAG, "Loaded ${athletes.size} athletes from server event")
+                
+            } catch (e: Exception) {
+                _athleteState.value = _athleteState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to load athletes: ${e.message}"
+                )
+                Log.e(TAG, "Error loading athletes from event: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * Load manually entered athletes (stand-alone mode)
+     */
+    fun loadManualAthletes() {
+        try {
+            val savedAthletesJson = preferences.getString(PREF_MANUAL_ATHLETES, null)
+            if (savedAthletesJson != null) {
+                val listType = object : TypeToken<List<CompetitionAthlete>>() {}.type
+                val athletes = gson.fromJson<List<CompetitionAthlete>>(savedAthletesJson, listType)
+                
+                _athleteState.value = _athleteState.value.copy(
+                    athletes = athletes,
+                    selectedAthletes = athletes.filter { it.isSelected },
+                    rotationOrder = athletes.filter { it.isSelected }.sortedBy { it.order }
+                )
+                
+                Log.d(TAG, "Loaded ${athletes.size} manual athletes")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading manual athletes: ${e.message}")
+        }
+    }
+    
+    /**
+     * Add manual athlete (stand-alone mode)
+     */
+    fun addManualAthlete(bib: String, name: String, club: String = "") {
+        viewModelScope.launch {
+            val currentAthletes = _athleteState.value.athletes.toMutableList()
+            val nextOrder = (currentAthletes.maxByOrNull { it.order }?.order ?: 0) + 1
+            
+            val newAthlete = CompetitionAthlete(
+                bib = bib,
+                order = nextOrder,
+                name = name,
+                club = club,
+                isSelected = true
+            )
+            
+            currentAthletes.add(newAthlete)
+            val selectedAthletes = currentAthletes.filter { it.isSelected }
+            
+            _athleteState.value = _athleteState.value.copy(
+                athletes = currentAthletes,
+                selectedAthletes = selectedAthletes,
+                rotationOrder = selectedAthletes.sortedBy { it.order }
+            )
+            
+            saveManualAthletes(currentAthletes)
+            Log.d(TAG, "Added manual athlete: $bib - $name")
+        }
+    }
+    
+    /**
+     * Remove athlete
+     */
+    fun removeAthlete(bib: String) {
+        viewModelScope.launch {
+            val currentAthletes = _athleteState.value.athletes.toMutableList()
+            currentAthletes.removeAll { it.bib == bib }
+            
+            val selectedAthletes = currentAthletes.filter { it.isSelected }
+            
+            _athleteState.value = _athleteState.value.copy(
+                athletes = currentAthletes,
+                selectedAthletes = selectedAthletes,
+                rotationOrder = selectedAthletes.sortedBy { it.order }
+            )
+            
+            saveManualAthletes(currentAthletes)
+            Log.d(TAG, "Removed athlete: $bib")
+        }
+    }
+    
+    /**
+     * Toggle athlete selection for competition
+     */
+    fun toggleAthleteSelection(bib: String) {
+        viewModelScope.launch {
+            val currentAthletes = _athleteState.value.athletes.toMutableList()
+            val athleteIndex = currentAthletes.indexOfFirst { it.bib == bib }
+            
+            if (athleteIndex != -1) {
+                val athlete = currentAthletes[athleteIndex]
+                currentAthletes[athleteIndex] = athlete.copy(isSelected = !athlete.isSelected)
+                
+                val selectedAthletes = currentAthletes.filter { it.isSelected }
+                
+                _athleteState.value = _athleteState.value.copy(
+                    athletes = currentAthletes,
+                    selectedAthletes = selectedAthletes,
+                    rotationOrder = selectedAthletes.sortedBy { it.order }
+                )
+                
+                Log.d(TAG, "Toggled selection for athlete $bib: ${athlete.isSelected}")
+            }
+        }
+    }
+    
+    /**
+     * Record attempt for athlete
+     */
+    fun recordAttempt(
+        athleteBib: String, 
+        round: Int, 
+        attemptNumber: Int, 
+        distance: Double?, 
+        isValid: Boolean,
+        windSpeed: Double? = null,
+        coordinates: ThrowCoordinate? = null
+    ) {
+        viewModelScope.launch {
+            val currentAthletes = _athleteState.value.athletes.toMutableList()
+            val athleteIndex = currentAthletes.indexOfFirst { it.bib == athleteBib }
+            
+            if (athleteIndex != -1) {
+                val athlete = currentAthletes[athleteIndex]
+                
+                val attempt = AthleteAttempt(
+                    round = round,
+                    attemptNumber = attemptNumber,
+                    distance = distance,
+                    windSpeed = windSpeed,
+                    isValid = isValid,
+                    coordinates = coordinates
+                )
+                
+                // Add attempt to athlete's record
+                athlete.attempts.add(attempt)
+                
+                // Add coordinates to heatmap data if valid
+                if (coordinates != null && isValid) {
+                    athlete.heatmapData.add(coordinates)
+                }
+                
+                // Update current best mark
+                val updatedAthlete = athlete.copy(
+                    currentBestMark = athlete.getBestMark()
+                )
+                currentAthletes[athleteIndex] = updatedAthlete
+                
+                _athleteState.value = _athleteState.value.copy(
+                    athletes = currentAthletes,
+                    selectedAthletes = currentAthletes.filter { it.isSelected }
+                )
+                
+                saveAthleteResults()
+                Log.d(TAG, "Recorded attempt for athlete $athleteBib: ${attempt.getDisplayMark()}")
+            }
+        }
+    }
+    
+    /**
+     * Navigate to next athlete in rotation
+     */
+    fun nextAthlete() {
+        val currentState = _athleteState.value
+        val nextIndex = (currentState.currentAthleteIndex + 1) % currentState.rotationOrder.size
+        
+        _athleteState.value = currentState.copy(
+            currentAthleteIndex = nextIndex
+        )
+    }
+    
+    /**
+     * Navigate to previous athlete in rotation
+     */
+    fun previousAthlete() {
+        val currentState = _athleteState.value
+        val previousIndex = if (currentState.currentAthleteIndex > 0) {
+            currentState.currentAthleteIndex - 1
+        } else {
+            currentState.rotationOrder.size - 1
+        }
+        
+        _athleteState.value = currentState.copy(
+            currentAthleteIndex = previousIndex
+        )
+    }
+    
+    /**
+     * Set current athlete by bib number
+     */
+    fun setCurrentAthlete(bib: String) {
+        val currentState = _athleteState.value
+        val athleteIndex = currentState.rotationOrder.indexOfFirst { it.bib == bib }
+        
+        if (athleteIndex != -1) {
+            _athleteState.value = currentState.copy(
+                currentAthleteIndex = athleteIndex
+            )
+        }
+    }
+    
+    /**
+     * Reorder athletes by performance (for post-round-3 reordering)
+     */
+    fun reorderAthletesByPerformance() {
+        viewModelScope.launch {
+            val currentState = _athleteState.value
+            val reorderedAthletes = currentState.selectedAthletes.sortedByDescending { 
+                it.getBestMark() ?: 0.0 
+            }
+            
+            _athleteState.value = currentState.copy(
+                rotationOrder = reorderedAthletes
+            )
+            
+            Log.d(TAG, "Reordered ${reorderedAthletes.size} athletes by performance")
+        }
+    }
+    
+    /**
+     * Get current athlete
+     */
+    fun getCurrentAthlete(): CompetitionAthlete? {
+        val state = _athleteState.value
+        return if (state.rotationOrder.isNotEmpty() && state.currentAthleteIndex < state.rotationOrder.size) {
+            state.rotationOrder[state.currentAthleteIndex]
+        } else null
+    }
+    
+    /**
+     * Get athlete by bib number
+     */
+    fun getAthleteByBib(bib: String): CompetitionAthlete? {
+        return _athleteState.value.athletes.find { it.bib == bib }
+    }
+    
+    /**
+     * Get athletes ranked by performance
+     */
+    fun getAthletesByRanking(): List<Pair<CompetitionAthlete, Int>> {
+        return _athleteState.value.selectedAthletes
+            .sortedByDescending { it.getBestMark() ?: 0.0 }
+            .mapIndexed { index, athlete -> athlete to (index + 1) }
+    }
+    
+    /**
+     * Clear error message
+     */
+    fun clearError() {
+        _athleteState.value = _athleteState.value.copy(errorMessage = null)
+    }
+    
+    /**
+     * Load saved athletes from preferences
+     */
+    private fun loadSavedAthletes() {
+        loadManualAthletes()
+    }
+    
+    /**
+     * Save manual athletes to preferences
+     */
+    private fun saveManualAthletes(athletes: List<CompetitionAthlete>) {
+        try {
+            val athletesJson = gson.toJson(athletes)
+            preferences.edit()
+                .putString(PREF_MANUAL_ATHLETES, athletesJson)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving manual athletes: ${e.message}")
+        }
+    }
+    
+    /**
+     * Save athlete results and attempts
+     */
+    private fun saveAthleteResults() {
+        try {
+            val resultsData = _athleteState.value.athletes.associate { athlete ->
+                athlete.bib to mapOf(
+                    "attempts" to athlete.attempts,
+                    "heatmapData" to athlete.heatmapData,
+                    "bestMark" to athlete.currentBestMark
+                )
+            }
+            
+            val resultsJson = gson.toJson(resultsData)
+            preferences.edit()
+                .putString(PREF_ATHLETE_RESULTS, resultsJson)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving athlete results: ${e.message}")
+        }
+    }
+    
+    /**
+     * Toggle athlete check-in status
+     */
+    fun toggleAthleteCheckIn(bib: String) {
+        val currentCheckedIn = _athleteState.value.checkedInAthletes.toMutableSet()
+        if (currentCheckedIn.contains(bib)) {
+            currentCheckedIn.remove(bib)
+        } else {
+            currentCheckedIn.add(bib)
+        }
+        
+        _athleteState.value = _athleteState.value.copy(
+            checkedInAthletes = currentCheckedIn.toSet()
+        )
+        
+        Log.d(TAG, "Athlete $bib check-in toggled. Total checked in: ${currentCheckedIn.size}")
+    }
+    
+    /**
+     * Select an athlete for measurement
+     */
+    fun selectAthlete(athlete: PolyFieldApiClient.Athlete) {
+        // Convert server athlete to competition athlete if needed
+        val competitionAthlete = _athleteState.value.athletes.find { it.bib == athlete.bib }
+            ?: CompetitionAthlete(
+                bib = athlete.bib,
+                order = athlete.order,
+                name = athlete.name,
+                club = athlete.club,
+                isSelected = true
+            )
+        
+        _athleteState.value = _athleteState.value.copy(
+            currentAthlete = competitionAthlete
+        )
+        
+        Log.d(TAG, "Selected athlete: ${athlete.name} (${athlete.bib})")
+    }
+    
+
+    // Convenience getters
+    fun getSelectedAthletes(): List<CompetitionAthlete> = _athleteState.value.selectedAthletes
+    fun getTotalAthletes(): Int = _athleteState.value.athletes.size
+    fun getSelectedAthleteCount(): Int = _athleteState.value.selectedAthletes.size
+    fun getCurrentAthleteIndex(): Int = _athleteState.value.currentAthleteIndex
+}
+
+/**
+ * Factory for creating AthleteManagerViewModel with Context
+ */
+class AthleteManagerViewModelFactory(private val context: Context) : androidx.lifecycle.ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(AthleteManagerViewModel::class.java)) {
+            return AthleteManagerViewModel(context) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
