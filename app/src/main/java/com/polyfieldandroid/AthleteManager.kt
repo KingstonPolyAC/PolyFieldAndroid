@@ -28,38 +28,40 @@ data class CompetitionAthlete(
 ) {
     fun getDisplayName(): String = "$bib - $name ($club)"
     
-    fun getCurrentRoundAttempts(round: Int): List<AthleteAttempt> {
+    fun getCurrentRoundMeasurements(round: Int): List<AthleteAttempt> {
         return attempts.filter { it.round == round }
     }
     
-    fun getValidAttempts(): List<AthleteAttempt> {
+    fun getValidMeasurements(): List<AthleteAttempt> {
         return attempts.filter { it.isValid && it.distance != null }
     }
     
     fun getBestMark(): Double? {
-        return getValidAttempts().maxByOrNull { it.distance ?: 0.0 }?.distance
+        return getValidMeasurements().maxByOrNull { it.distance ?: 0.0 }?.distance
     }
     
-    fun getAttemptCount(round: Int): Int {
-        return getCurrentRoundAttempts(round).size
+    fun getMeasurementCount(round: Int): Int {
+        return getCurrentRoundMeasurements(round).size
     }
 }
 
 /**
- * Individual attempt data
+ * Individual measurement data for a round
  */
 data class AthleteAttempt(
     val id: String = java.util.UUID.randomUUID().toString(),
     val round: Int,
-    val attemptNumber: Int,
+    val attemptNumber: Int = 1, // Always 1 for throws/horizontal jumps
     val distance: Double? = null, // Distance in meters
     val windSpeed: Double? = null, // Wind speed in m/s
     val isValid: Boolean = true,
+    val isPass: Boolean = false, // Whether this is a pass (valid but no distance)
     val timestamp: Long = System.currentTimeMillis(),
     val coordinates: ThrowCoordinate? = null // Landing coordinates for heatmap
 ) {
     fun getDisplayMark(): String = when {
-        !isValid -> "FOUL"
+        !isValid -> "X"
+        isPass -> "P"
         distance != null -> String.format("%.2f m", distance)
         else -> "—"
     }
@@ -242,14 +244,15 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
     }
     
     /**
-     * Record attempt for athlete
+     * Record measurement for athlete
      */
-    fun recordAttempt(
+    fun recordMeasurement(
         athleteBib: String, 
         round: Int, 
         attemptNumber: Int, 
         distance: Double?, 
         isValid: Boolean,
+        isPass: Boolean = false,
         windSpeed: Double? = null,
         coordinates: ThrowCoordinate? = null
     ) {
@@ -260,36 +263,52 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
             if (athleteIndex != -1) {
                 val athlete = currentAthletes[athleteIndex]
                 
-                val attempt = AthleteAttempt(
+                val measurement = AthleteAttempt(
                     round = round,
-                    attemptNumber = attemptNumber,
+                    attemptNumber = 1, // Always 1 for throws/horizontal jumps
                     distance = distance,
                     windSpeed = windSpeed,
                     isValid = isValid,
+                    isPass = isPass,
                     coordinates = coordinates
                 )
                 
-                // Add attempt to athlete's record
-                athlete.attempts.add(attempt)
+                // Replace existing round measurement or add new one
+                val updatedMeasurements = athlete.attempts.toMutableList()
+                val existingIndex = updatedMeasurements.indexOfFirst { it.round == round }
                 
-                // Add coordinates to heatmap data if valid
-                if (coordinates != null && isValid) {
-                    athlete.heatmapData.add(coordinates)
+                if (existingIndex >= 0) {
+                    // Replace existing measurement for this round
+                    updatedMeasurements[existingIndex] = measurement
+                } else {
+                    // Add new measurement for this round
+                    updatedMeasurements.add(measurement)
                 }
                 
-                // Update current best mark
+                // Update heatmap data - remove old coordinates for this round first
+                val updatedHeatmapData = athlete.heatmapData.toMutableList()
+                updatedHeatmapData.removeAll { it.round == round }
+                if (coordinates != null && isValid) {
+                    updatedHeatmapData.add(coordinates)
+                }
+                
+                // Create updated athlete with new data
                 val updatedAthlete = athlete.copy(
-                    currentBestMark = athlete.getBestMark()
+                    attempts = updatedMeasurements,
+                    heatmapData = updatedHeatmapData,
+                    currentBestMark = updatedMeasurements.filter { it.isValid && it.distance != null }
+                        .maxByOrNull { it.distance ?: 0.0 }?.distance
                 )
                 currentAthletes[athleteIndex] = updatedAthlete
                 
                 _athleteState.value = _athleteState.value.copy(
                     athletes = currentAthletes,
-                    selectedAthletes = currentAthletes.filter { it.isSelected }
+                    selectedAthletes = currentAthletes.filter { it.isSelected },
+                    rotationOrder = currentAthletes.filter { it.isSelected }.sortedBy { it.order }
                 )
                 
                 saveAthleteResults()
-                Log.d(TAG, "Recorded attempt for athlete $athleteBib: ${attempt.getDisplayMark()}")
+                Log.d(TAG, "Recorded measurement for athlete $athleteBib: ${measurement.getDisplayMark()}")
             }
         }
     }
@@ -338,19 +357,65 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
     
     /**
      * Reorder athletes by performance (for post-round-3 reordering)
+     * WA/UKA Rules: Best performers throw last (reverse order)
      */
-    fun reorderAthletesByPerformance() {
+    fun reorderAthletesByPerformance(reverseOrder: Boolean = true) {
         viewModelScope.launch {
             val currentState = _athleteState.value
-            val reorderedAthletes = currentState.selectedAthletes.sortedByDescending { 
-                it.getBestMark() ?: 0.0 
+            val reorderedAthletes = if (reverseOrder) {
+                // WA/UKA Rules: Best performers throw last (worst to best)
+                currentState.selectedAthletes.sortedBy { 
+                    it.getBestMark() ?: 0.0 
+                }
+            } else {
+                // Traditional: Best performers throw first (best to worst)
+                currentState.selectedAthletes.sortedByDescending { 
+                    it.getBestMark() ?: 0.0 
+                }
             }
             
             _athleteState.value = currentState.copy(
                 rotationOrder = reorderedAthletes
             )
             
-            Log.d(TAG, "Reordered ${reorderedAthletes.size} athletes by performance")
+            Log.d(TAG, "Reordered ${reorderedAthletes.size} athletes by performance (reverse: $reverseOrder)")
+        }
+    }
+    
+    /**
+     * Apply cutoff and reordering after Round 3
+     */
+    fun applyCutoffAndReordering(cutoff: Int, enableReordering: Boolean) {
+        viewModelScope.launch {
+            val currentState = _athleteState.value
+            
+            // Apply cutoff first
+            val cutoffAthletes = if (cutoff == -1) {
+                // ALL athletes advance
+                currentState.selectedAthletes
+            } else {
+                // Top N athletes advance
+                currentState.selectedAthletes
+                    .sortedByDescending { it.getBestMark() ?: 0.0 }
+                    .take(cutoff)
+            }
+            
+            // Apply reordering if enabled
+            val finalOrder = if (enableReordering) {
+                // WA/UKA Rules: Best performers throw last
+                cutoffAthletes.sortedBy { it.getBestMark() ?: 0.0 }
+            } else {
+                // Keep current order
+                cutoffAthletes.sortedBy { it.order }
+            }
+            
+            _athleteState.value = currentState.copy(
+                selectedAthletes = cutoffAthletes,
+                rotationOrder = finalOrder,
+                currentAthleteIndex = 0 // Reset to first athlete
+            )
+            
+            Log.d(TAG, "Applied cutoff ($cutoff) and reordering ($enableReordering). ${finalOrder.size} athletes advancing")
         }
     }
     
@@ -453,20 +518,34 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
      */
     fun selectAthlete(athlete: PolyFieldApiClient.Athlete) {
         // Convert server athlete to competition athlete if needed
-        val competitionAthlete = _athleteState.value.athletes.find { it.bib == athlete.bib }
-            ?: CompetitionAthlete(
-                bib = athlete.bib,
-                order = athlete.order,
-                name = athlete.name,
-                club = athlete.club,
-                isSelected = true
-            )
-        
-        _athleteState.value = _athleteState.value.copy(
-            currentAthlete = competitionAthlete
+        val existingAthlete = _athleteState.value.athletes.find { it.bib == athlete.bib }
+        val competitionAthlete = existingAthlete ?: CompetitionAthlete(
+            bib = athlete.bib,
+            order = athlete.order,
+            name = athlete.name,
+            club = athlete.club,
+            isSelected = true
         )
-        
-        Log.d(TAG, "Selected athlete: ${athlete.name} (${athlete.bib})")
+
+        // Add athlete to athletes list if not already present
+        val updatedAthletes = if (existingAthlete == null) {
+            _athleteState.value.athletes.toMutableList().apply { add(competitionAthlete) }
+        } else {
+            _athleteState.value.athletes
+        }
+
+        // Find the athlete's index in the rotation order
+        val rotationIndex = _athleteState.value.rotationOrder.indexOfFirst { it.bib == athlete.bib }
+
+        _athleteState.value = _athleteState.value.copy(
+            athletes = updatedAthletes,
+            currentAthlete = competitionAthlete,
+            currentAthleteIndex = if (rotationIndex >= 0) rotationIndex else 0,
+            selectedAthletes = updatedAthletes.filter { it.isSelected },
+            rotationOrder = updatedAthletes.filter { it.isSelected }.sortedBy { it.order }
+        )
+
+        Log.d(TAG, "Selected athlete: ${athlete.name} (${athlete.bib}) at rotation index $rotationIndex. Total athletes: ${updatedAthletes.size}")
     }
     
 

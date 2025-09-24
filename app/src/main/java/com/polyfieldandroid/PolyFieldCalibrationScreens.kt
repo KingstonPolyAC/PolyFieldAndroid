@@ -300,7 +300,7 @@ fun CalibrationSetCentreScreenExact(
                     
                     Text(
                         text = "Radius: ${String.format(java.util.Locale.UK, "%.4f", calibration.targetRadius)}m",
-                        fontSize = 18.sp,
+                        fontSize = 22.sp,
                         color = Color(0xFF666666),
                         textAlign = TextAlign.Center
                     )
@@ -313,7 +313,7 @@ fun CalibrationSetCentreScreenExact(
                         enabled = !isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(80.dp),
+                            .height(60.dp),
                         shape = RoundedCornerShape(15.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (calibration.centreSet) Color(0xFF4CAF50) else Color(0xFF1976D2)
@@ -327,7 +327,7 @@ fun CalibrationSetCentreScreenExact(
                                 calibration.centreSet -> "✓ Centre Set"
                                 else -> "Set Centre"
                             },
-                            fontSize = if (calibration.centreSet) 42.sp else 20.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             textAlign = TextAlign.Center
@@ -339,11 +339,13 @@ fun CalibrationSetCentreScreenExact(
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedButton(
                             onClick = onResetCentre,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp)
                         ) {
                             Text(
                                 text = "Reset Centre",
-                                fontSize = 18.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFF44336)
                             )
@@ -371,7 +373,7 @@ fun CalibrationSetCentreScreenExact(
                     ) {
                         Text(
                             text = "Load Previous Calibration",
-                            fontSize = 18.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1976D2),
                             modifier = Modifier.padding(bottom = 16.dp)
@@ -401,8 +403,9 @@ fun CalibrationSetCentreScreenExact(
                                     if (calibrationRecord.isComplete()) {
                                         Text(
                                             text = "✓ Complete (Centre + Edge + Sector Line)",
-                                            fontSize = 11.sp,
-                                            color = Color(0xFF4CAF50)
+                                            fontSize = 14.sp,
+                                            color = Color(0xFF4CAF50),
+                                            textAlign = TextAlign.Center
                                         )
                                     }
                                 }
@@ -505,8 +508,9 @@ fun CalibrationSetCentreScreenExact(
                                     if (calibrationRecord.isComplete()) {
                                         Text(
                                             text = "✓ Complete (Centre + Edge + Sector Line)",
-                                            fontSize = 12.sp,
-                                            color = Color(0xFF4CAF50)
+                                            fontSize = 14.sp,
+                                            color = Color(0xFF4CAF50),
+                                            textAlign = TextAlign.Center
                                         )
                                     }
                                 }
@@ -533,7 +537,7 @@ fun CalibrationSetCentreScreenExact(
                 enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(80.dp),
+                    .height(60.dp),
                 shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (calibration.centreSet) Color(0xFF4CAF50) else Color(0xFF1976D2)
@@ -547,7 +551,7 @@ fun CalibrationSetCentreScreenExact(
                         calibration.centreSet -> "✓ Centre Set - ${formatTimestamp(calibration.centreTimestamp)}"
                         else -> "Set Centre"
                     },
-                    fontSize = if (calibration.centreSet) 14.sp else 20.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     textAlign = TextAlign.Center
@@ -560,10 +564,14 @@ fun CalibrationSetCentreScreenExact(
                 
                 OutlinedButton(
                     onClick = onResetCentre,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
                 ) {
                     Text(
                         text = "Reset Centre",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
                         color = Color(0xFFF44336)
                     )
                 }
@@ -675,12 +683,13 @@ fun CalibrationVerifyEdgeScreenExact(
                         
                         // Results details - simplified format
                         Text(
-                            text = "Measured radius: ${String.format(java.util.Locale.UK, "%.3f", result.averageRadius)}m\n" +
+                            text = "Measured radius: ${String.format(java.util.Locale.UK, "%.2f", kotlin.math.floor(result.averageRadius * 100) / 100)}m\n" +
                                    "Deviation: ${if (result.deviation >= 0) "+" else ""}${String.format(java.util.Locale.UK, "%.1f", result.deviation * 1000)}mm",
-                            fontSize = 14.sp,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Medium,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center,
-                            lineHeight = 20.sp
+                            lineHeight = 28.sp
                         )
                     }
                 }
@@ -708,7 +717,7 @@ fun CalibrationVerifyEdgeScreenExact(
                             !calibration.centreSet -> "Set Centre First"
                             else -> "Verify Edge"
                         },
-                        fontSize = 18.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
@@ -739,7 +748,7 @@ fun CalibrationVerifyEdgeScreenExact(
                         ) {
                             Text(
                                 text = "Remeasure",
-                                fontSize = 18.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
@@ -758,7 +767,7 @@ fun CalibrationVerifyEdgeScreenExact(
                         ) {
                             Text(
                                 text = "Remeasure",
-                                fontSize = 18.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )

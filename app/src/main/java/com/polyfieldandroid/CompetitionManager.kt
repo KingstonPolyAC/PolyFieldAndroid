@@ -359,6 +359,72 @@ class CompetitionManagerViewModel(private val context: Context) : ViewModel() {
         }
     }
     
+    /**
+     * Update athlete cutoff (typically called at end of round 3)
+     */
+    fun updateAthleteCutoff(cutoff: Int) {
+        viewModelScope.launch {
+            val currentState = _competitionState.value
+            val updatedSettings = currentState.settings.copy(
+                athleteCutoff = cutoff,
+                allowAllAthletes = cutoff == -1
+            )
+            
+            _competitionState.value = currentState.copy(
+                settings = updatedSettings
+            )
+            
+            saveSettings(updatedSettings)
+            Log.d(TAG, "Updated athlete cutoff to: ${if (cutoff == -1) "ALL" else cutoff}")
+        }
+    }
+    
+    /**
+     * Update reordering setting for current round
+     */
+    fun updateReorderingSetting(enableReordering: Boolean) {
+        viewModelScope.launch {
+            val currentState = _competitionState.value
+            val updatedSettings = currentState.settings.copy(
+                reorderAfterRound3 = enableReordering
+            )
+            
+            _competitionState.value = currentState.copy(
+                settings = updatedSettings
+            )
+            
+            saveSettings(updatedSettings)
+            Log.d(TAG, "Updated reordering setting to: $enableReordering")
+        }
+    }
+    
+    /**
+     * Advance to the next round
+     */
+    fun advanceToNextRound() {
+        viewModelScope.launch {
+            val currentState = _competitionState.value
+            val nextRound = currentState.currentRound + 1
+            
+            if (nextRound <= currentState.settings.numberOfRounds) {
+                _competitionState.value = currentState.copy(
+                    currentRound = nextRound,
+                    currentAthleteIndex = 0, // Reset to first athlete
+                    roundComplete = false
+                )
+                
+                Log.d(TAG, "Advanced to round $nextRound")
+            } else {
+                // Competition complete
+                _competitionState.value = currentState.copy(
+                    competitionComplete = true
+                )
+                
+                Log.d(TAG, "Competition completed")
+            }
+        }
+    }
+    
     // Convenience getters
     fun isCompetitionActive(): Boolean = _competitionState.value.isActive
     fun isCompetitionCalibrated(): Boolean = _competitionState.value.isCalibrated

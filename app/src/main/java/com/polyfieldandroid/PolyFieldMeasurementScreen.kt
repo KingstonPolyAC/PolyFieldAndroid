@@ -124,7 +124,7 @@ fun ThrowsMeasurementInterface(
                 
                 Text(
                     text = measurement.ifEmpty { "--" },
-                    fontSize = maxOf(48f, screenWidth * 0.08f).sp,
+                    fontSize = maxOf(72f, screenWidth * 0.12f).sp, // Increased from 48sp to 72sp for field visibility
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2),
                     textAlign = TextAlign.Center
@@ -146,7 +146,7 @@ fun ThrowsMeasurementInterface(
         ) {
             Text(
                 text = if (isLoading) "Measuring..." else "MEASURE",
-                fontSize = 18.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center
@@ -193,7 +193,7 @@ fun HorizontalJumpsMeasurementInterface(
             
             Text(
                 text = windMeasurement.ifEmpty { "--" },
-                fontSize = 32.sp,
+                fontSize = 48.sp, // Increased from 32sp to 48sp for field visibility
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1976D2),
                 modifier = Modifier.padding(vertical = 15.dp)
@@ -212,7 +212,7 @@ fun HorizontalJumpsMeasurementInterface(
             ) {
                 Text(
                     text = if (isLoading) "Reading Wind..." else "Measure Wind",
-                    fontSize = 18.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
@@ -276,7 +276,7 @@ fun StatItem(
     ) {
         Text(
             text = value,
-            fontSize = 20.sp,
+            fontSize = 28.sp, // Increased from 20sp to 28sp for better field visibility
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1976D2)
         )

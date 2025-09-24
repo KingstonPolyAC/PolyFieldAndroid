@@ -248,10 +248,12 @@ fun CalibrationSectorLineScreen(
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     Text(
-                        text = "${String.format(java.util.Locale.UK, "%.3f", calibration.sectorLineDistance)} m",
+                        text = "${String.format(java.util.Locale.UK, "%.2f", kotlin.math.floor(calibration.sectorLineDistance * 100) / 100)} m",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1976D2)
+                        color = Color(0xFF1976D2),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                     Text(
                         text = "beyond circle edge",
@@ -3277,7 +3279,7 @@ fun PolyFieldApp(
                               (uiState.currentScreen == "COMPETITION_ACTIVE_CONNECTED" || 
                                uiState.currentScreen == "COMPETITION_MEASUREMENT_CONNECTED"),
             onBackClick = { navigateBack(viewModel, uiState) },
-            onNextClick = { navigateForward(viewModel, uiState) },
+            onNextClick = { navigateForward(viewModel, uiState, athleteManager) },
             onHeatMapClick = { viewModel.toggleHeatMap() },
             onResultsClick = { 
                 viewModel.updateScreen("COMPETITION_RESULTS_CONNECTED") 
@@ -3549,7 +3551,7 @@ private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
     viewModel.updateScreen(previousScreen)
 }
 
-private fun navigateForward(viewModel: AppViewModel, uiState: AppState) {
+private fun navigateForward(viewModel: AppViewModel, uiState: AppState, athleteManager: AthleteManagerViewModel? = null) {
     val nextScreen = when (uiState.currentScreen) {
         "SELECT_EVENT_TYPE" -> "DEVICE_SETUP"
         "DEVICE_SETUP" -> if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE" else "MEASUREMENT"
@@ -3566,11 +3568,11 @@ private fun navigateForward(viewModel: AppViewModel, uiState: AppState) {
             }
         }
         "CALIBRATION_SELECT_CIRCLE" -> {
-            if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE" 
+            if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE"
             else uiState.currentScreen // Don't advance if no circle selected
         }
         "CALIBRATION_SELECT_CIRCLE_CONNECTED" -> {
-            if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE_CONNECTED" 
+            if (uiState.calibration.circleType.isNotEmpty()) "CALIBRATION_SET_CENTRE_CONNECTED"
             else uiState.currentScreen // Don't advance if no circle selected
         }
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_VERIFY_EDGE"
@@ -3580,6 +3582,13 @@ private fun navigateForward(viewModel: AppViewModel, uiState: AppState) {
         "CALIBRATION_SECTOR_LINE" -> "MEASUREMENT"
         "CALIBRATION_SECTOR_LINE_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
         "COMPETITION_ACTIVE_CONNECTED" -> "COMPETITION_MEASUREMENT_CONNECTED"
+        "COMPETITION_MEASUREMENT_CONNECTED" -> {
+            // Move to next athlete instead of changing screen
+            android.util.Log.d("Navigation", "Next button clicked on measurement screen - calling nextAthlete()")
+            athleteManager?.nextAthlete()
+            android.util.Log.d("Navigation", "nextAthlete() called successfully")
+            uiState.currentScreen // Stay on measurement screen
+        }
         else -> uiState.currentScreen
     }
     viewModel.updateScreen(nextScreen)

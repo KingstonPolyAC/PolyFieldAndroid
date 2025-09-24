@@ -1,7 +1,10 @@
 package com.polyfieldandroid
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -91,7 +94,7 @@ fun CompetitionAthleteScreen(
                 label = { 
                     Text(
                         if (showOnlyCheckedIn) "Show All" else "Checked In Only",
-                        fontSize = 14.sp
+                        fontSize = 18.sp
                     ) 
                 },
                 selected = showOnlyCheckedIn,
@@ -158,6 +161,11 @@ fun CompetitionAthleteScreen(
         // Athletes list - compact layout: 1 column portrait, 2 columns landscape
         val columns = if (isLandscape) 2 else 1
         
+        // Calculate competition order for checked-in athletes only
+        val checkedInAthletes = allAthletes.filter { athlete ->
+            athleteState.checkedInAthletes.contains(athlete.bib)
+        }.sortedBy { it.order }
+        
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxWidth(),
@@ -179,6 +187,11 @@ fun CompetitionAthleteScreen(
                     if (position >= 0) position + 1 else null
                 } else null
                 
+                // Calculate competition order for checked-in athletes only
+                val competitionOrder = if (athleteState.checkedInAthletes.contains(athlete.bib)) {
+                    checkedInAthletes.indexOfFirst { it.bib == athlete.bib } + 1
+                } else null
+                
                 val bestMark = athleteResults?.getBestMark()?.let { 
                     String.format("%.2fm", it) 
                 }
@@ -195,7 +208,8 @@ fun CompetitionAthleteScreen(
                     screenWidth = screenWidth,
                     isCompactMode = isLandscape,
                     currentPosition = currentPosition,
-                    bestMark = bestMark
+                    bestMark = bestMark,
+                    competitionOrder = competitionOrder
                 )
             }
         }
@@ -343,7 +357,8 @@ fun AthleteGridItem(
     screenWidth: Int,
     isCompactMode: Boolean = false,
     currentPosition: Int? = null, // Current ranking position when measurements exist
-    bestMark: String? = null // Best mark when measurements exist
+    bestMark: String? = null, // Best mark when measurements exist
+    competitionOrder: Int? = null // Competition order for checked-in athletes only
 ) {
     Card(
         modifier = Modifier
@@ -427,12 +442,15 @@ fun AthleteGridItem(
                         maxLines = 1
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "#${athlete.order}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF666666)
-                    )
+                    // Show competition order only for checked-in athletes
+                    if (competitionOrder != null) {
+                        Text(
+                            text = "#$competitionOrder",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF666666)
+                        )
+                    }
                 }
                 
                 // Club name
@@ -502,9 +520,12 @@ fun CompetitionResultsScreen(
     val screenHeight = configuration.screenHeightDp
     val isLandscape = screenWidth > screenHeight
     
-    // Get all athletes with performance data (including those without results)
+    // Get only checked-in athletes with performance data
     val allAthletes = selectedEvent.athletes ?: emptyList()
-    val athletesWithData = allAthletes.map { athlete ->
+    val checkedInAthletes = allAthletes.filter { athlete ->
+        athleteState.checkedInAthletes.contains(athlete.bib)
+    }
+    val athletesWithData = checkedInAthletes.map { athlete ->
         val athleteResults = athleteState.athletes.find { it.bib == athlete.bib }
         athlete to athleteResults
     }
@@ -552,8 +573,8 @@ fun CompetitionResultsScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "${allAthletes.size}",
-                        fontSize = 24.sp,
+                        text = "${checkedInAthletes.size}",
+                        fontSize = 32.sp, // Increased from 24sp to 32sp for better visibility
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1976D2)
                     )
@@ -566,7 +587,7 @@ fun CompetitionResultsScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "${athletesWithResults.size}",
-                        fontSize = 24.sp,
+                        fontSize = 32.sp, // Increased from 24sp to 32sp for better visibility
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF4CAF50)
                     )
@@ -580,7 +601,7 @@ fun CompetitionResultsScreen(
                     val bestResult = athletesWithResults.firstOrNull()?.second?.getBestMark()
                     Text(
                         text = bestResult?.let { String.format("%.2fm", it) } ?: "—",
-                        fontSize = 24.sp,
+                        fontSize = 32.sp, // Increased from 24sp to 32sp for better visibility
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFF9800)
                     )
@@ -773,12 +794,12 @@ fun ResultsListItem(
                 if (bestMark != null) {
                     Text(
                         text = String.format("%.2fm", bestMark),
-                        fontSize = if (isCompact) 16.sp else 18.sp,
+                        fontSize = if (isCompact) 24.sp else 28.sp, // Increased from 16/18sp to 24/28sp for field visibility
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1976D2)
                     )
                     Text(
-                        text = "${results.getValidAttempts().size} attempts",
+                        text = "${results.getValidMeasurements().size} measurements",
                         fontSize = if (isCompact) 10.sp else 11.sp,
                         color = Color(0xFF666666)
                     )
@@ -898,6 +919,7 @@ fun CompetitionMeasurementScreen(
     modeManager: ModeManagerViewModel,
     onBackToAthletes: () -> Unit,
     onEndCompetition: () -> Unit,
+    onNextAthlete: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val athleteState by athleteManager.athleteState.collectAsState()
@@ -912,12 +934,44 @@ fun CompetitionMeasurementScreen(
         athleteState.checkedInAthletes.contains(athlete.bib)
     }
     
-    // Competition state
+    // Competition state - manage current athlete locally for checked-in athletes only
     val currentRound = measurementManager.currentRound
-    val currentAthleteIndex = athleteState.currentAthleteIndex
+
+    // Local state for managing current athlete within checked-in athletes
+    var currentAthleteIndex by remember { mutableStateOf(0) }
+    var selectedRound by remember { mutableStateOf(currentRound) }
+
+    // Update selectedRound when currentRound changes
+    LaunchedEffect(currentRound) {
+        selectedRound = currentRound
+    }
+
+    // Get current athlete - default to first checked-in athlete
     val currentAthlete = if (checkedInAthletes.isNotEmpty() && currentAthleteIndex < checkedInAthletes.size) {
-        checkedInAthletes[currentAthleteIndex]
-    } else null
+        checkedInAthletes[currentAthleteIndex].also { athlete ->
+            android.util.Log.d("CompetitionFlow", "Current athlete: ${athlete.name} (${athlete.bib}) at index $currentAthleteIndex/${checkedInAthletes.size}, Round: $selectedRound")
+        }
+    } else {
+        android.util.Log.d("CompetitionFlow", "No current athlete - index: $currentAthleteIndex, checkedIn: ${checkedInAthletes.size}")
+        null
+    }
+
+    // Reset athlete index when checked-in athletes change
+    LaunchedEffect(checkedInAthletes.size) {
+        if (checkedInAthletes.isNotEmpty() && currentAthleteIndex >= checkedInAthletes.size) {
+            currentAthleteIndex = 0
+        }
+    }
+
+    // Start competition with correct athlete count - only once when we have checked-in athletes
+    LaunchedEffect(checkedInAthletes.isNotEmpty()) {
+        if (checkedInAthletes.isNotEmpty()) {
+            measurementManager.setDemoMode(true)
+            val actualCheckedInCount = checkedInAthletes.size
+            android.util.Log.d("CompetitionFlow", "Starting competition with $actualCheckedInCount checked-in athletes")
+            measurementManager.startCompetitionWithCount(actualCheckedInCount)
+        }
+    }
     
     val isLoading = measurementManager.isLoading
     
@@ -926,80 +980,78 @@ fun CompetitionMeasurementScreen(
             .fillMaxSize()
             .padding(maxOf(16f, screenWidth * 0.020f).dp)
     ) {
-        // Header with event and round info
-        CompetitionHeader(
-            eventName = translateEventName(selectedEvent.name),
-            currentRound = currentRound,
-            totalRounds = 6,
-            screenWidth = screenWidth
-        )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
+
         if (currentAthlete != null) {
-            // Current athlete display
-            CurrentAthleteCard(
-                athlete = currentAthlete,
-                attemptNumber = measurementManager.currentAttemptNumber,
-                bestMark = measurementManager.getBestMarkFormattedForAthlete(currentAthlete.bib),
-                currentRanking = measurementManager.getRankingForAthlete(currentAthlete.bib),
-                screenWidth = screenWidth
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Measurement interface
-            MeasurementInterface(
-                measurement = measurementState.currentMeasurement?.let { 
-                    if (it.isValid && it.distance != null) {
-                        String.format(java.util.Locale.UK, "%.2f m", it.distance)
-                    } else {
-                        "FOUL"
-                    }
-                } ?: "",
-                isLoading = false, // Simplified for now
-                onMeasure = {
-                    scope.launch {
-                        measurementManager.measureThrow()
-                    }
-                },
-                onRecordResult = { distance ->
-                    measurementManager.recordResult(
-                        athleteBib = currentAthlete.bib,
-                        round = currentRound,
-                        attemptNumber = measurementManager.currentAttemptNumber,
-                        distance = distance,
-                        isValid = true
-                    )
-                },
+            // Use the enhanced measurement screen for individual athlete
+            EnhancedAthleteMeasurementScreen(
+                currentAthlete = currentAthlete,
+                allAthletes = checkedInAthletes,
+                athleteManager = athleteManager,
+                measurementManager = measurementManager,
+                currentRound = currentRound,
+                totalRounds = 6,
+                onBackToAthletes = onBackToAthletes,
+                onEndCompetition = onEndCompetition,
                 onNextAthlete = {
-                    measurementManager.advanceToNextAthlete()
+                    android.util.Log.d("CompetitionFlow", "Next athlete requested: $currentAthleteIndex -> ${currentAthleteIndex + 1}/${checkedInAthletes.size}")
+                    if (currentAthleteIndex < checkedInAthletes.size - 1) {
+                        // Move to next athlete
+                        currentAthleteIndex++
+                        android.util.Log.d("CompetitionFlow", "Advanced to athlete ${checkedInAthletes[currentAthleteIndex].name}")
+                    } else {
+                        android.util.Log.d("CompetitionFlow", "At last athlete - cycling back to first")
+                        currentAthleteIndex = 0
+                        android.util.Log.d("CompetitionFlow", "Cycled back to first athlete: ${checkedInAthletes[currentAthleteIndex].name}")
+                    }
                 },
-                screenWidth = screenWidth
+                onPreviousAthlete = {
+                    android.util.Log.d("CompetitionFlow", "Previous athlete requested: $currentAthleteIndex -> ${currentAthleteIndex - 1}")
+                    if (currentAthleteIndex > 0) {
+                        currentAthleteIndex--
+                        android.util.Log.d("CompetitionFlow", "Went back to athlete ${checkedInAthletes[currentAthleteIndex].name}")
+                    } else {
+                        android.util.Log.d("CompetitionFlow", "Cannot go back - at first athlete")
+                    }
+                },
+                modifier = Modifier.weight(1f) // Take remaining space
             )
-            
-            Spacer(modifier = Modifier.height(16.dp))
+        } else {
+            // No current athlete - show selection prompt
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "No Athletes Selected",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF666666)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Please check in athletes to begin the competition",
+                    fontSize = 16.sp,
+                    color = Color(0xFF999999),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = onBackToAthletes,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                ) {
+                    Text(
+                        text = "Back to Athletes",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
         }
-        
-        // Rotation queue and rankings
-        CompetitionRotationDisplay(
-            athletes = checkedInAthletes,
-            measurementManager = measurementManager,
-            currentAthleteIndex = currentAthleteIndex,
-            currentRound = currentRound,
-            screenWidth = screenWidth
-        )
-        
-        // Bottom spacing for navigation
-        Spacer(modifier = Modifier.height(100.dp))
     }
-    
-    // Handle round completion dialogs
-    HandleRoundCompletionDialogs(
-        measurementState = measurementState,
-        measurementManager = measurementManager,
-        onEndCompetition = onEndCompetition
-    )
 }
 
 @Composable
@@ -1286,13 +1338,14 @@ fun CurrentAthleteCard(
                 ) {
                     Text(
                         text = "Ranking: #$currentRanking",
-                        fontSize = 14.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1976D2)
                     )
                     Text(
                         text = "Best: ${bestMark ?: "--"}",
-                        fontSize = 14.sp,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
                         color = Color(0xFF4CAF50)
                     )
                 }
@@ -1302,7 +1355,7 @@ fun CurrentAthleteCard(
             
             Text(
                 text = "Attempt #$attemptNumber",
-                fontSize = 16.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF1976D2)
             )
@@ -1393,19 +1446,19 @@ fun RotationAthleteItem(
                 // Ranking
                 Text(
                     text = "#$ranking",
-                    fontSize = 14.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2),
-                    modifier = Modifier.width(30.dp)
+                    modifier = Modifier.width(35.dp)
                 )
                 
                 // Bib
                 Text(
                     text = athlete.bib,
-                    fontSize = 14.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF333333),
-                    modifier = Modifier.width(35.dp)
+                    modifier = Modifier.width(40.dp)
                 )
                 
                 // Name
@@ -1421,8 +1474,8 @@ fun RotationAthleteItem(
             // Best mark
             Text(
                 text = bestMark?.let { String.format("%.2fm", it) } ?: "--",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
                 color = if (bestMark != null) Color(0xFF4CAF50) else Color(0xFF999999)
             )
         }
@@ -1534,6 +1587,7 @@ fun ModeCardMaterialDesign(
     onClick: () -> Unit,
     screenWidth: Int,
     screenHeight: Int,
+    isStandalone: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -1547,7 +1601,7 @@ fun ModeCardMaterialDesign(
             ),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White
+            containerColor = if (isStandalone) Color(0xFF1976D2) else Color.White
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
@@ -1563,7 +1617,7 @@ fun ModeCardMaterialDesign(
                 contentDescription = title,
                 modifier = Modifier
                     .size(maxOf(64f, screenWidth * 0.08f).dp),
-                tint = Color(0xFF1976D2)
+                tint = if (isStandalone) Color.White else Color(0xFF1976D2)
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -1572,7 +1626,7 @@ fun ModeCardMaterialDesign(
                 text = title,
                 fontSize = maxOf(18f, screenWidth * 0.022f).sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF333333),
+                color = if (isStandalone) Color.White else Color(0xFF333333),
                 textAlign = TextAlign.Center
             )
             
@@ -1935,17 +1989,17 @@ fun ServerEventButton(
         ) {
             Text(
                 text = translateEventName(event.name),
-                fontSize = maxOf(14f, screenWidth * 0.018f).sp,
+                fontSize = maxOf(24f, screenWidth * 0.028f).sp, // Increased from 14f to 24f for better visibility
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF1976D2),
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Start
             )
-            
+
             if (event.athletes?.isNotEmpty() == true) {
                 Text(
                     text = "[${event.athletes?.size}]",
-                    fontSize = 16.sp,
+                    fontSize = 22.sp, // Increased from 16sp to 22sp for better visibility
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF666666)
                 )
@@ -2328,7 +2382,7 @@ fun MeasurementInterface(
             ) {
                 Text(
                     text = "Distance Measurement",
-                    fontSize = 18.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF333333)
                 )
@@ -2337,9 +2391,10 @@ fun MeasurementInterface(
                 
                 Text(
                     text = measurement?.distance?.let { String.format("%.2f m", it) } ?: "--",
-                    fontSize = 36.sp,
+                    fontSize = 64.sp, // Increased from 36sp to 64sp for field visibility
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1976D2)
+                    color = Color(0xFF1976D2),
+                    textAlign = TextAlign.Center
                 )
                 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -2399,6 +2454,890 @@ fun MeasurementInterface(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Enhanced Athlete Measurement Screen with comprehensive features:
+ * - Responsive landscape/portrait layouts
+ * - Measure/Foul/Pass buttons
+ * - Athlete throw history with round breakdown
+ * - Clickable round editing
+ * - Smart athlete navigation
+ * - Current position display
+ */
+@Composable
+fun EnhancedAthleteMeasurementScreen(
+    currentAthlete: PolyFieldApiClient.Athlete,
+    allAthletes: List<PolyFieldApiClient.Athlete>,
+    athleteManager: AthleteManagerViewModel,
+    measurementManager: CompetitionMeasurementManager,
+    currentRound: Int,
+    totalRounds: Int = 6,
+    onBackToAthletes: () -> Unit,
+    onEndCompetition: () -> Unit,
+    onNextAthlete: () -> Unit,
+    onPreviousAthlete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val athleteState by athleteManager.athleteState.collectAsState()
+    val measurementState by measurementManager.measurementState.collectAsState()
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+    val scope = rememberCoroutineScope()
+    
+    // Get athlete data - avoid AthleteManager dependencies to prevent cycling
+    val competitionAthlete = athleteState.athletes.find { it.bib == currentAthlete.bib }
+    val currentPosition = 1 // Simplified for now to avoid cycling issues
+    val bestMark = competitionAthlete?.getBestMark()
+    val hasMeasurementThisRound = competitionAthlete?.getCurrentRoundMeasurements(currentRound)?.isNotEmpty() ?: false
+    val attemptNumber = 1 // Always 1 since only one attempt per round
+
+    // Remove next athlete info call to prevent cycling
+    val nextAthlete: PolyFieldApiClient.Athlete? = null
+    
+    // Competition setup is now handled by parent CompetitionMeasurementScreen
+
+    // Athlete selection is now handled by the parent CompetitionMeasurementScreen
+    
+    if (isLandscape) {
+        // Landscape layout - top 2/3 split 50/50, bottom 1/3 full-width history
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Top 2/3 - Split 50/50 between Athlete Info and Measurement Interface
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(2f), // Takes 2/3 of available height
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Left 50% - Athlete info
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    AthleteInfoCard(
+                        athlete = currentAthlete,
+                        position = currentPosition,
+                        bestMark = bestMark,
+                        currentRound = currentRound,
+                        attemptNumber = attemptNumber,
+                        screenWidth = screenWidth
+                    )
+                }
+
+                // Right 50% - Measurement interface
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    EnhancedMeasurementInterface(
+                        measurement = measurementState.currentMeasurement,
+                        isLoading = measurementManager.isLoading,
+                        onMeasure = {
+                            android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK: athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                            scope.launch {
+                                android.util.Log.d("MeasurementCallbacks", "Starting measureThrowForAthlete coroutine...")
+                                val result = measurementManager.measureThrowForAthlete(currentAthlete)
+                                android.util.Log.d("MeasurementCallbacks", "measureThrowForAthlete result: $result")
+                            }
+                        },
+                        onFoul = {
+                            android.util.Log.d("MeasurementCallbacks", "FOUL CALLBACK: athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                            measurementManager.recordFoul(currentAthlete.bib, currentRound, attemptNumber)
+                            android.util.Log.d("MeasurementCallbacks", "recordFoul completed")
+                        },
+                        onPass = {
+                            android.util.Log.d("MeasurementCallbacks", "PASS CALLBACK: athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                            measurementManager.recordPass(currentAthlete.bib, currentRound, attemptNumber)
+                            android.util.Log.d("MeasurementCallbacks", "recordPass completed")
+                        },
+                        screenWidth = screenWidth
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Bottom 1/3 - Full-width throw history (two-column layout)
+            AthleteHistoryCard(
+                competitionAthlete = competitionAthlete,
+                currentRound = currentRound,
+                onEditMeasurement = { round, measurement ->
+                    measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
+                },
+                onRoundSelected = { round ->
+                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement - click functionality preserved")
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f), // Takes 1/3 of available height
+                twoColumnLayout = true
+            )
+        }
+    } else {
+        // Portrait layout - stacked
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            AthleteInfoCard(
+                athlete = currentAthlete,
+                position = currentPosition,
+                bestMark = bestMark,
+                currentRound = currentRound,
+                attemptNumber = attemptNumber,
+                screenWidth = screenWidth
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            EnhancedMeasurementInterface(
+                measurement = measurementState.currentMeasurement,
+                isLoading = measurementManager.isLoading,
+                onMeasure = {
+                    android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                    scope.launch {
+                        android.util.Log.d("MeasurementCallbacks", "Starting measureThrowForAthlete coroutine (portrait)...")
+                        val result = measurementManager.measureThrowForAthlete(currentAthlete)
+                        android.util.Log.d("MeasurementCallbacks", "measureThrowForAthlete result (portrait): $result")
+                    }
+                },
+                onFoul = {
+                    android.util.Log.d("MeasurementCallbacks", "FOUL CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                    measurementManager.recordFoul(currentAthlete.bib, currentRound, attemptNumber)
+                    android.util.Log.d("MeasurementCallbacks", "recordFoul completed (portrait)")
+                },
+                onPass = {
+                    android.util.Log.d("MeasurementCallbacks", "PASS CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                    measurementManager.recordPass(currentAthlete.bib, currentRound, attemptNumber)
+                    android.util.Log.d("MeasurementCallbacks", "recordPass completed (portrait)")
+                },
+                screenWidth = screenWidth
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            AthleteHistoryCard(
+                competitionAthlete = competitionAthlete,
+                currentRound = currentRound,
+                onEditMeasurement = { round, measurement ->
+                    measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
+                },
+                onRoundSelected = { round ->
+                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement (portrait) - click functionality preserved")
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun AthleteInfoCard(
+    athlete: PolyFieldApiClient.Athlete,
+    position: Int,
+    bestMark: Double?,
+    currentRound: Int,
+    attemptNumber: Int,
+    screenWidth: Int
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            // Header with position and round
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Round $currentRound",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1976D2)
+                )
+                
+                // Current position
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = when {
+                            position <= 3 -> Color(0xFFFFD700) // Gold for top 3
+                            position <= 8 -> Color(0xFF4CAF50) // Green for advancement
+                            else -> Color(0xFFE0E0E0)
+                        }
+                    ),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text(
+                        text = "#$position",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (position <= 3) Color.Black else Color.White,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Athlete info
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = athlete.bib,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF666666)
+                    )
+                    Text(
+                        text = athlete.name,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF333333)
+                    )
+                    Text(
+                        text = athlete.club,
+                        fontSize = 16.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+                
+                // Best mark
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Text(
+                        text = "Best Mark",
+                        fontSize = 14.sp,
+                        color = Color(0xFF666666)
+                    )
+                    Text(
+                        text = bestMark?.let { String.format("%.2fm", it) } ?: "--",
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (bestMark != null) Color(0xFF4CAF50) else Color(0xFF999999)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EnhancedMeasurementInterface(
+    measurement: MeasurementResult?,
+    isLoading: Boolean,
+    onMeasure: () -> Unit,
+    onFoul: () -> Unit,
+    onPass: () -> Unit,
+    screenWidth: Int
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Current measurement display
+            Text(
+                text = "Distance",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF666666)
+            )
+            
+            Text(
+                text = measurement?.let {
+                    if (it.isValid && it.distance != null) {
+                        String.format("%.2f m", it.distance)
+                    } else if (!it.isValid) {
+                        "X"
+                    } else {
+                        "P"
+                    }
+                } ?: "--",
+                fontSize = 72.sp,
+                fontWeight = FontWeight.Bold,
+                color = measurement?.let {
+                    when {
+                        !it.isValid -> Color(0xFFF44336) // Red for foul
+                        it.distance == null -> Color(0xFFFF9800) // Orange for pass
+                        else -> Color(0xFF1976D2) // Blue for valid measurement
+                    }
+                } ?: Color(0xFF999999),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(vertical = 16.dp)
+            )
+            
+            // Action buttons - Measure, Foul, Pass
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = {
+                        android.util.Log.d("MeasurementUI", "MEASURE BUTTON CLICKED!")
+                        onMeasure()
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = if (isLoading) "Measuring..." else "MEASURE",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                
+                Button(
+                    onClick = {
+                        android.util.Log.d("MeasurementUI", "X BUTTON CLICKED!")
+                        onFoul()
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "X",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                
+                Button(
+                    onClick = {
+                        android.util.Log.d("MeasurementUI", "P BUTTON CLICKED!")
+                        onPass()
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "P",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+            
+            // Next athlete functionality is now handled by the bottom navigation Next button
+        }
+    }
+}
+
+@Composable
+fun AthleteHistoryCard(
+    competitionAthlete: CompetitionAthlete?,
+    currentRound: Int,
+    onEditMeasurement: (round: Int, measurement: Int) -> Unit,
+    onRoundSelected: (round: Int) -> Unit = {},
+    modifier: Modifier = Modifier,
+    twoColumnLayout: Boolean = false
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            if (competitionAthlete != null) {
+                if (twoColumnLayout) {
+                    // Two-column layout for landscape
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Left column: rounds 1-3
+                        Column(modifier = Modifier.weight(1f)) {
+                            (1..3).forEach { round ->
+                                RoundRow(
+                                    round = round,
+                                    competitionAthlete = competitionAthlete,
+                                    currentRound = currentRound,
+                                    onRoundSelected = onRoundSelected,
+                                    onEditMeasurement = onEditMeasurement,
+                                    showDivider = round < 3
+                                )
+                            }
+                        }
+
+                        // Right column: rounds 4-6
+                        Column(modifier = Modifier.weight(1f)) {
+                            (4..6).forEach { round ->
+                                RoundRow(
+                                    round = round,
+                                    competitionAthlete = competitionAthlete,
+                                    currentRound = currentRound,
+                                    onRoundSelected = onRoundSelected,
+                                    onEditMeasurement = onEditMeasurement,
+                                    showDivider = round < 6
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Single column layout for portrait
+                    (1..6).forEach { round ->
+                        RoundRow(
+                            round = round,
+                            competitionAthlete = competitionAthlete,
+                            currentRound = currentRound,
+                            onRoundSelected = onRoundSelected,
+                            onEditMeasurement = onEditMeasurement,
+                            showDivider = round < 6
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = "No attempts recorded",
+                    fontSize = 16.sp,
+                    color = Color(0xFF999999),
+                    style = androidx.compose.ui.text.TextStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundRow(
+    round: Int,
+    competitionAthlete: CompetitionAthlete,
+    currentRound: Int,
+    onRoundSelected: (Int) -> Unit,
+    onEditMeasurement: (Int, Int) -> Unit,
+    showDivider: Boolean
+) {
+    val roundMeasurements = competitionAthlete.getCurrentRoundMeasurements(round)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable {
+                android.util.Log.d("AthleteHistory", "Round $round selected")
+                onRoundSelected(round)
+            },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Round label
+        Text(
+            text = "R$round:",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (round == currentRound) Color(0xFF1976D2) else Color(0xFF666666),
+            modifier = Modifier.width(50.dp)
+        )
+
+        // Attempts for this round
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            if (roundMeasurements.isEmpty()) {
+                Text(
+                    text = if (round <= currentRound) "—" else "•",
+                    fontSize = 24.sp,
+                    color = Color(0xFF999999)
+                )
+            } else {
+                roundMeasurements.forEachIndexed { index, measurement ->
+                    Card(
+                        modifier = Modifier.clickable {
+                            if (round <= currentRound) {
+                                onEditMeasurement(round, index + 1)
+                            }
+                        },
+                        colors = CardDefaults.cardColors(
+                            containerColor = when {
+                                !measurement.isValid -> Color(0xFFF44336) // Red for foul
+                                measurement.distance == null -> Color(0xFFFF9800) // Orange for pass
+                                else -> Color(0xFF4CAF50) // Green for valid
+                            }
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = measurement.getDisplayMark(),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDivider) {
+        Divider(
+            color = Color(0xFFE0E0E0),
+            thickness = 1.dp,
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+    }
+}
+
+/**
+ * Inter-round notification showing current standings and round progression
+ */
+@Composable
+fun InterRoundNotification(
+    currentRound: Int,
+    nextRound: Int,
+    athleteStandings: List<Pair<CompetitionAthlete, Int>>, // athlete to ranking
+    competitionSettings: CompetitionSettings,
+    onContinueToNextRound: () -> Unit,
+    onCutoffSelected: (Int) -> Unit = {}, // For round 3 cutoff selection
+    onReorderingSelected: (Boolean) -> Unit = {}, // For reordering selection
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var selectedReordering by remember { mutableStateOf(competitionSettings.reorderAfterRound3) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = modifier,
+        title = {
+            Text(
+                text = when (currentRound) {
+                    3 -> "Round 3 Complete - Finals Setup"
+                    4 -> "Round 4 Complete - Reorder for Round 5?"
+                    5 -> "Round 5 Complete - Reorder for Round 6?"
+                    else -> "Round $currentRound Complete"
+                },
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2)
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Current Standings:",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF333333),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                
+                // Show all athletes for round 3, limited for other rounds
+                val displayAthletes = if (currentRound == 3) athleteStandings else athleteStandings.take(8)
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = if (currentRound == 3) 400.dp else 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(displayAthletes) { (athlete, ranking) ->
+                        StandingRow(
+                            athlete = athlete,
+                            ranking = ranking,
+                            isAdvancing = if (currentRound == 3) {
+                                if (competitionSettings.allowAllAthletes) true else ranking <= competitionSettings.athleteCutoff
+                            } else {
+                                ranking <= 8 // Default for other rounds
+                            }
+                        )
+                    }
+                }
+                
+                // Round-specific options
+                when (currentRound) {
+                    3 -> {
+                        // Round 3: Cutoff selection AND reordering option
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Select number of athletes advancing to finals:",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        // Cutoff options: 3, 4, 5, 6, 8, 9, 10, 12, ALL
+                        val cutoffOptions = listOf(3, 4, 5, 6, 8, 9, 10, 12) + listOf(-1) // -1 represents ALL
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            items(cutoffOptions) { cutoff ->
+                                FilterChip(
+                                    onClick = { onCutoffSelected(cutoff) },
+                                    label = {
+                                        Text(
+                                            text = if (cutoff == -1) "ALL" else cutoff.toString(),
+                                            fontSize = 14.sp
+                                        )
+                                    },
+                                    selected = competitionSettings.athleteCutoff == cutoff,
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFF1976D2),
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                            }
+                        }
+                        
+                        // Reordering option for Round 3
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Reorder athletes for finals? (WA/UKA Rules)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            FilterChip(
+                                onClick = { 
+                                    selectedReordering = true
+                                    onReorderingSelected(true) 
+                                },
+                                label = { Text("Yes - Reorder", fontSize = 14.sp) },
+                                selected = selectedReordering,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF4CAF50),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                            
+                            FilterChip(
+                                onClick = { 
+                                    selectedReordering = false
+                                    onReorderingSelected(false) 
+                                },
+                                label = { Text("No - Keep Order", fontSize = 14.sp) },
+                                selected = !selectedReordering,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF666666),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                        
+                        if (selectedReordering) {
+                            Text(
+                                text = "Athletes will be reordered by performance (best thrower last)",
+                                fontSize = 12.sp,
+                                color = Color(0xFF666666),
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                    
+                    4, 5 -> {
+                        // Rounds 4 & 5: Reordering option only
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Reorder athletes for Round $nextRound? (WA/UKA Rules)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        Text(
+                            text = "Best performing athletes throw last for psychological advantage",
+                            fontSize = 14.sp,
+                            color = Color(0xFF666666),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            FilterChip(
+                                onClick = { 
+                                    selectedReordering = true
+                                    onReorderingSelected(true) 
+                                },
+                                label = { Text("Yes - Reorder", fontSize = 14.sp) },
+                                selected = selectedReordering,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF4CAF50),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                            
+                            FilterChip(
+                                onClick = { 
+                                    selectedReordering = false
+                                    onReorderingSelected(false) 
+                                },
+                                label = { Text("No - Keep Order", fontSize = 14.sp) },
+                                selected = !selectedReordering,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF666666),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+                
+                if (nextRound <= 6) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = when (currentRound) {
+                            3 -> "Ready to start Round $nextRound with selected settings?"
+                            4, 5 -> "Ready to start Round $nextRound with selected order?"
+                            else -> "Ready to start Round $nextRound?"
+                        },
+                        fontSize = 16.sp,
+                        color = Color(0xFF666666),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onContinueToNextRound,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+            ) {
+                Text(
+                    text = if (nextRound <= 6) "Start Round $nextRound" else "End Competition",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(
+                    text = "Review",
+                    fontSize = 16.sp,
+                    color = Color(0xFF1976D2)
+                )
+            }
+        }
+    )
+}
+
+@Composable
+fun StandingRow(
+    athlete: CompetitionAthlete,
+    ranking: Int,
+    isAdvancing: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = if (isAdvancing) Color(0xFFE8F5E8) else Color(0xFFFFF3E0),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Position and athlete info
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Ranking
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        ranking <= 3 -> Color(0xFFFFD700) // Gold for top 3
+                        isAdvancing -> Color(0xFF4CAF50) // Green for advancing
+                        else -> Color(0xFFE0E0E0) // Grey for non-advancing
+                    }
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = "$ranking",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (ranking <= 3) Color.Black else Color.White,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+            
+            // Athlete info
+            Column {
+                Text(
+                    text = "${athlete.bib} - ${athlete.name}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF333333)
+                )
+                Text(
+                    text = athlete.club,
+                    fontSize = 14.sp,
+                    color = Color(0xFF666666)
+                )
+            }
+        }
+        
+        // Best mark
+        Column(
+            horizontalAlignment = Alignment.End
+        ) {
+            Text(
+                text = athlete.getBestMark()?.let { String.format("%.2fm", it) } ?: "--",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (athlete.getBestMark() != null) Color(0xFF4CAF50) else Color(0xFF999999)
+            )
+            Text(
+                text = if (isAdvancing) "Advancing" else "Eliminated",
+                fontSize = 12.sp,
+                color = if (isAdvancing) Color(0xFF4CAF50) else Color(0xFFF44336),
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }

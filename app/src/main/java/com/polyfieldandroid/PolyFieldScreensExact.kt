@@ -51,7 +51,7 @@ fun PolyFieldHeaderExact(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(maxOf(80.dp, (screenHeight * 0.1f).dp)),
+            .height(56.dp),
         shape = RectangleShape,
         colors = CardDefaults.cardColors(
             containerColor = Color(0xFF1976D2)
@@ -61,7 +61,7 @@ fun PolyFieldHeaderExact(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -69,7 +69,7 @@ fun PolyFieldHeaderExact(
             Text(
                 text = "PolyField by KACPH",
                 color = Color.White,
-                fontSize = maxOf(24f, screenWidth * 0.025f).sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
             
@@ -85,14 +85,14 @@ fun PolyFieldHeaderExact(
                         colors = CardDefaults.cardColors(
                             containerColor = Color(0x33FFEB3B)
                         ),
-                        shape = RoundedCornerShape(15.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "Demo Active",
                             color = Color(0xFFFFEB3B),
-                            fontSize = maxOf(18f, screenWidth * 0.02f).sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
                 } else {
@@ -101,14 +101,14 @@ fun PolyFieldHeaderExact(
                         colors = CardDefaults.cardColors(
                             containerColor = Color(0x334CAF50)
                         ),
-                        shape = RoundedCornerShape(15.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "Live Mode",
                             color = Color(0xFF4CAF50),
-                            fontSize = maxOf(18f, screenWidth * 0.02f).sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
                 }

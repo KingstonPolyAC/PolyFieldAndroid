@@ -33,6 +33,7 @@ data class MeasurementResult(
     val distance: Double?, // Distance in meters
     val windSpeed: Double? = null, // Wind speed in m/s
     val isValid: Boolean = true,
+    val isPass: Boolean = false, // Whether this is a pass (valid but no distance)
     val coordinates: ThrowCoordinate? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val rawEDMReading: Any? = null // Can store any EDM reading format
@@ -108,29 +109,36 @@ class CompetitionMeasurementManager(
     suspend fun measureThrow(): MeasurementResult? {
         return try {
             val currentAthlete = athleteManager.getCurrentAthlete()
+            Log.d(TAG, "measureThrow called - currentAthlete: ${currentAthlete?.bib}")
             if (currentAthlete == null) {
                 _measurementState.value = _measurementState.value.copy(
                     errorMessage = "No current athlete selected"
                 )
+                Log.e(TAG, "No current athlete selected")
                 return null
             }
             
             val competitionState = competitionManager.competitionState.value
+            Log.d(TAG, "Competition active: ${competitionState.isActive}, round: ${competitionState.currentRound}")
             if (!competitionState.isActive) {
                 _measurementState.value = _measurementState.value.copy(
                     errorMessage = "Competition not active"
                 )
+                Log.e(TAG, "Competition not active")
                 return null
             }
             
-            // Get current attempt number for athlete
+            // Get current round
             val currentRound = competitionState.currentRound
-            val attemptNumber = currentAthlete.getAttemptCount(currentRound) + 1
+            val attemptNumber = 1 // Always 1 since only one attempt per round
             
             // Take measurement using existing EDM module
+            Log.d(TAG, "Demo mode: ${_measurementState.value.isDemoMode}")
             val measurementResult = if (_measurementState.value.isDemoMode) {
+                Log.d(TAG, "Taking demo measurement")
                 takeDemoMeasurement(currentAthlete.bib, currentRound, attemptNumber)
             } else {
+                Log.d(TAG, "Taking real measurement")
                 takeRealMeasurement(currentAthlete.bib, currentRound, attemptNumber)
             }
             
@@ -235,10 +243,12 @@ class CompetitionMeasurementManager(
         round: Int, 
         attemptNumber: Int
     ): MeasurementResult {
+        println("TAKING DEMO MEASUREMENT for athlete $athleteBib, round $round")
         // Generate realistic demo values
         val baseDistance = 12.0 + (kotlin.random.Random.nextDouble() * 8.0) // 12-20m range
         val isValidThrow = kotlin.random.Random.nextDouble() > 0.15 // 85% valid throws
         val distance = if (isValidThrow) baseDistance else null
+        println("GENERATED DISTANCE: $distance")
         
         val windSpeed = -2.0 + (kotlin.random.Random.nextDouble() * 4.0) // -2 to +2 m/s
         
@@ -315,28 +325,34 @@ class CompetitionMeasurementManager(
      * Record measurement result
      */
     private fun recordMeasurement(result: MeasurementResult) {
+        println("RECORD MEASUREMENT CALLED for ${result.athleteBib}, round ${result.round}, distance ${result.distance}, foul: ${!result.isValid}, pass: ${result.isPass}")
         viewModelScope.launch {
             try {
                 // Add to measurement history
                 val updatedHistory = _measurementState.value.measurementHistory.toMutableList()
                 updatedHistory.add(result)
+                println("ADDED TO MEASUREMENT HISTORY")
                 
                 _measurementState.value = _measurementState.value.copy(
+                    currentMeasurement = result, // Set as current measurement for display
                     measurementHistory = updatedHistory
                 )
                 
-                // Record attempt in athlete manager
-                athleteManager.recordAttempt(
+                // Record measurement in athlete manager
+                println("CALLING athleteManager.recordMeasurement")
+                athleteManager.recordMeasurement(
                     athleteBib = result.athleteBib,
                     round = result.round,
                     attemptNumber = result.attemptNumber,
                     distance = result.distance,
                     isValid = result.isValid,
+                    isPass = result.isPass,
                     windSpeed = result.windSpeed,
                     coordinates = result.coordinates
                 )
+                println("ATHLETE MANAGER RECORD COMPLETE")
                 
-                // Record attempt in competition manager
+                // Record measurement in competition manager
                 competitionManager.recordAttempt(result.athleteBib, result.attemptNumber)
                 
                 // Submit to server if in connected mode
@@ -363,15 +379,15 @@ class CompetitionMeasurementManager(
             val event = competitionManager.competitionState.value.selectedEvent ?: return
             val athlete = athleteManager.getAthleteByBib(result.athleteBib) ?: return
             
-            // Get all attempts for this athlete to build series
-            val allAttempts = athlete.getCurrentRoundAttempts(result.round)
-            val series = allAttempts.map { attempt ->
+            // Get all measurements for this athlete to build series
+            val allMeasurements = athlete.getCurrentRoundMeasurements(result.round)
+            val series = allMeasurements.map { measurement ->
                 PolyFieldApiClient.Performance(
-                    attempt = attempt.attemptNumber,
-                    mark = attempt.distance?.let { "%.2f".format(it) } ?: "FOUL",
+                    attempt = measurement.attemptNumber,
+                    mark = measurement.distance?.let { "%.2f".format(it) } ?: if (measurement.isPass) "PASS" else "FOUL",
                     unit = "m",
-                    wind = attempt.windSpeed?.let { "%.1f".format(it) },
-                    valid = attempt.isValid
+                    wind = measurement.windSpeed?.let { "%.1f".format(it) },
+                    valid = measurement.isValid
                 )
             }
             
@@ -402,7 +418,7 @@ class CompetitionMeasurementManager(
         
         if (competitionState.isActive) {
             val currentRound = competitionState.currentRound
-            val attemptNumber = currentAthlete.getAttemptCount(currentRound) + 1
+            val attemptNumber = 1 // Always 1 for single measurement per round
             
             val foulResult = MeasurementResult(
                 athleteBib = currentAthlete.bib,
@@ -465,8 +481,29 @@ class CompetitionMeasurementManager(
      */
     fun startCompetition() {
         viewModelScope.launch {
+            // Start the actual competition in competition manager
+            val selectedEvent = competitionManager.competitionState.value.selectedEvent
+            val totalAthletes = athleteManager.getSelectedAthleteCount()
+            competitionManager.startCompetition(selectedEvent, totalAthletes)
+
+            // Start measurement session
             startMeasurement()
-            Log.d(TAG, "Started competition")
+            Log.d(TAG, "Started competition with $totalAthletes athletes")
+        }
+    }
+
+    /**
+     * Start competition with specific athlete count (for local athlete management)
+     */
+    fun startCompetitionWithCount(checkedInAthleteCount: Int) {
+        viewModelScope.launch {
+            // Start the actual competition in competition manager with specific count
+            val selectedEvent = competitionManager.competitionState.value.selectedEvent
+            competitionManager.startCompetition(selectedEvent, checkedInAthleteCount)
+
+            // Start measurement session
+            startMeasurement()
+            Log.d(TAG, "Started competition with $checkedInAthleteCount checked-in athletes")
         }
     }
     
@@ -500,13 +537,6 @@ class CompetitionMeasurementManager(
         recordMeasurement(result)
     }
     
-    /**
-     * Advance to next athlete in rotation
-     */
-    fun advanceToNextAthlete() {
-        athleteManager.nextAthlete()
-        competitionManager.nextAthlete()
-    }
     
     /**
      * Get best mark for specific athlete
@@ -550,6 +580,246 @@ class CompetitionMeasurementManager(
     fun isEDMConnected(): Boolean = _measurementState.value.isConnectedToEDM
     fun isWindConnected(): Boolean = _measurementState.value.isConnectedToWind
     fun isDemoMode(): Boolean = _measurementState.value.isDemoMode
+    
+    /**
+     * Clear current measurement (resets display to "--")
+     */
+    fun clearCurrentMeasurement() {
+        _measurementState.value = _measurementState.value.copy(
+            currentMeasurement = null,
+            errorMessage = null
+        )
+    }
+    
+    /**
+     * Reset measurement display when changing athlete or round
+     */
+    fun resetMeasurementDisplay() {
+        _measurementState.value = _measurementState.value.copy(
+            currentMeasurement = null,
+            errorMessage = null
+        )
+    }
+    
+    /**
+     * Get attempt number for specific athlete and round
+     */
+    fun getMeasurementNumberForAthlete(athleteBib: String, round: Int): Int {
+        return 1 // Always 1 for single measurement per round
+    }
+    
+    /**
+     * Get next athlete info for navigation
+     */
+    fun getNextAthleteInfo(): PolyFieldApiClient.Athlete? {
+        val athleteState = athleteManager.athleteState.value
+        val competitionState = competitionManager.competitionState.value
+        
+        if (athleteState.rotationOrder.isEmpty()) return null
+        
+        val currentIndex = athleteState.currentAthleteIndex
+        val nextIndex = (currentIndex + 1) % athleteState.rotationOrder.size
+        
+        // If we've cycled through all athletes, check if we need to advance round
+        if (nextIndex == 0) {
+            // Check if all athletes have completed current round
+            val allCompleted = athleteState.rotationOrder.all { athlete ->
+                athlete.getMeasurementCount(competitionState.currentRound) > 0
+            }
+            
+            if (allCompleted && competitionState.currentRound < 6) {
+                // Should advance to next round - return first athlete
+                return athleteState.rotationOrder.firstOrNull()?.let { competitionAthlete ->
+                    PolyFieldApiClient.Athlete(
+                        bib = competitionAthlete.bib,
+                        order = competitionAthlete.order,
+                        name = competitionAthlete.name,
+                        club = competitionAthlete.club
+                    )
+                }
+            }
+        }
+        
+        return athleteState.rotationOrder.getOrNull(nextIndex)?.let { competitionAthlete ->
+            PolyFieldApiClient.Athlete(
+                bib = competitionAthlete.bib,
+                order = competitionAthlete.order,
+                name = competitionAthlete.name,
+                club = competitionAthlete.club
+            )
+        }
+    }
+    
+    /**
+     * Check if we can advance to next athlete
+     */
+    fun canAdvanceToNextAthlete(): Boolean {
+        val athleteState = athleteManager.athleteState.value
+        val currentAthlete = athleteState.currentAthlete ?: athleteManager.getCurrentAthlete()
+        val competitionState = competitionManager.competitionState.value
+
+        // Can advance if current athlete has recorded an attempt for current round
+        return currentAthlete?.getMeasurementCount(competitionState.currentRound) ?: 0 > 0
+    }
+
+    /**
+     * Take measurement for specific athlete (doesn't rely on AthleteManager current athlete)
+     */
+    suspend fun measureThrowForAthlete(athlete: PolyFieldApiClient.Athlete): MeasurementResult? {
+        return try {
+            Log.d(TAG, "measureThrowForAthlete called - athlete: ${athlete.bib}")
+
+            val competitionState = competitionManager.competitionState.value
+            Log.d(TAG, "Competition active: ${competitionState.isActive}, round: ${competitionState.currentRound}")
+            if (!competitionState.isActive) {
+                _measurementState.value = _measurementState.value.copy(
+                    errorMessage = "Competition not active"
+                )
+                Log.e(TAG, "Competition not active")
+                return null
+            }
+
+            // Get current round
+            val currentRound = competitionState.currentRound
+            val attemptNumber = 1 // Always 1 since only one attempt per round
+
+            // Take measurement using existing EDM module
+            Log.d(TAG, "Demo mode: ${_measurementState.value.isDemoMode}")
+            val measurementResult = if (_measurementState.value.isDemoMode) {
+                Log.d(TAG, "Taking demo measurement for athlete ${athlete.bib}")
+                takeDemoMeasurement(athlete.bib, currentRound, attemptNumber)
+            } else {
+                Log.d(TAG, "Taking real measurement for athlete ${athlete.bib}")
+                takeRealMeasurement(athlete.bib, currentRound, attemptNumber)
+            }
+
+            // Record the measurement
+            if (measurementResult != null) {
+                recordMeasurement(measurementResult)
+                Log.d(TAG, "Recorded measurement: ${measurementResult.distance}m for athlete ${athlete.bib}")
+            }
+
+            measurementResult
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error taking measurement for athlete ${athlete.bib}: ${e.message}")
+            _measurementState.value = _measurementState.value.copy(
+                errorMessage = "Measurement failed: ${e.message}"
+            )
+            null
+        }
+    }
+
+    /**
+     * Check if specific athlete can advance to next attempt/round
+     */
+    fun canAthleteAdvance(athleteBib: String): Boolean {
+        val competitionAthlete = athleteManager.athleteState.value.athletes.find { it.bib == athleteBib }
+        val competitionState = competitionManager.competitionState.value
+
+        // Can advance if athlete has recorded an attempt for current round
+        return competitionAthlete?.getMeasurementCount(competitionState.currentRound) ?: 0 > 0
+    }
+    
+    /**
+     * Advance to next athlete in rotation
+     */
+    fun advanceToNextAthlete() {
+        val athleteState = athleteManager.athleteState.value
+        val competitionState = competitionManager.competitionState.value
+        
+        if (athleteState.rotationOrder.isEmpty()) return
+        
+        val currentIndex = athleteState.currentAthleteIndex
+        val nextIndex = (currentIndex + 1) % athleteState.rotationOrder.size
+        
+        // If we've completed a full rotation, check for round advancement
+        if (nextIndex == 0) {
+            val allCompleted = athleteState.rotationOrder.all { athlete ->
+                athlete.getMeasurementCount(competitionState.currentRound) > 0
+            }
+            
+            if (allCompleted && competitionState.currentRound < 6) {
+                // Check which round completion scenario
+                when (competitionState.currentRound) {
+                    3 -> {
+                        // Round 3: Need cutoff selection AND reordering option
+                        Log.d(TAG, "Round 3 complete - awaiting cutoff and reordering selection")
+                    }
+                    4, 5 -> {
+                        // Rounds 4 & 5: Need reordering option only
+                        Log.d(TAG, "Round ${competitionState.currentRound} complete - awaiting reordering selection")
+                    }
+                    else -> {
+                        // Other rounds: Auto-advance
+                        competitionManager.advanceToNextRound()
+                    }
+                }
+            }
+        }
+        
+        athleteManager.nextAthlete()
+        Log.d(TAG, "Advanced to next athlete: index $nextIndex")
+    }
+    
+    /**
+     * Record foul for athlete
+     */
+    fun recordFoul(athleteBib: String, round: Int, attemptNumber: Int = 1) {
+        println("RECORDING FOUL for athlete $athleteBib, round $round")
+        val foulResult = MeasurementResult(
+            athleteBib = athleteBib,
+            round = round,
+            attemptNumber = 1, // Always 1 since only one attempt per round
+            distance = null,
+            isValid = false
+        )
+        
+        recordMeasurement(foulResult)
+        println("FOUL RECORDED - calling recordMeasurement")
+        Log.d(TAG, "Recorded foul for athlete $athleteBib, round $round")
+    }
+    
+    /**
+     * Record pass for athlete
+     */
+    fun recordPass(athleteBib: String, round: Int, attemptNumber: Int = 1) {
+        println("RECORDING PASS for athlete $athleteBib, round $round")
+        val passResult = MeasurementResult(
+            athleteBib = athleteBib,
+            round = round,
+            attemptNumber = 1, // Always 1 since only one attempt per round
+            distance = null,
+            isValid = true, // Pass is valid, just no distance
+            isPass = true // This is a pass
+        )
+        
+        recordMeasurement(passResult)
+        println("PASS RECORDED - calling recordMeasurement")
+        Log.d(TAG, "Recorded pass for athlete $athleteBib, round $round")
+    }
+    
+    /**
+     * Edit/delete specific attempt
+     */
+    fun editMeasurement(athleteBib: String, round: Int, measurementNumber: Int) {
+        // For now, just clear the measurement for the round - allows re-measurement
+        val currentAthletes = athleteManager.athleteState.value.athletes.toMutableList()
+        val athleteIndex = currentAthletes.indexOfFirst { it.bib == athleteBib }
+        
+        if (athleteIndex != -1) {
+            val athlete = currentAthletes[athleteIndex]
+            val updatedMeasurements = athlete.attempts.toMutableList()
+            updatedMeasurements.removeAll { it.round == round }
+            
+            val updatedAthlete = athlete.copy(attempts = updatedMeasurements)
+            currentAthletes[athleteIndex] = updatedAthlete
+            
+            // Update athlete state (this needs to be done through AthleteManager)
+            // For now just log the action
+            Log.d(TAG, "Cleared measurement for athlete $athleteBib, round $round")
+        }
+    }
 }
 
 /**
