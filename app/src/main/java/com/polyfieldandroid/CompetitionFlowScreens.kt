@@ -202,7 +202,7 @@ fun CompetitionAthleteScreen(
                     onCheckInToggle = { 
                         athleteManager.toggleAthleteCheckIn(athlete.bib)
                     },
-                    onAthleteClick = { 
+                    onAthleteClick = {
                         onAthleteSelected(athlete)
                     },
                     screenWidth = screenWidth,
@@ -542,7 +542,7 @@ fun CompetitionResultsScreen(
         }
     }
     
-    val athletesWithResults = athletesWithData.filter { (_, results) -> results?.getBestMark() != null }
+    val athletesWithResults = sortedAthletes.filter { (_, results) -> results?.getBestMark() != null }
     
     Column(
         modifier = Modifier
@@ -934,8 +934,9 @@ fun CompetitionMeasurementScreen(
         athleteState.checkedInAthletes.contains(athlete.bib)
     }
     
-    // Competition state - manage current athlete locally for checked-in athletes only
-    val currentRound = measurementManager.currentRound
+    // Competition state - get current round from competition manager reactively
+    val competitionState by measurementManager.competitionState.collectAsState()
+    val currentRound = competitionState.currentRound
 
     // Local state for managing current athlete within checked-in athletes
     var currentAthleteIndex by remember { mutableStateOf(0) }
@@ -963,6 +964,18 @@ fun CompetitionMeasurementScreen(
         }
     }
 
+    // Sync local UI state with backend athlete state changes
+    LaunchedEffect(athleteState.currentAthlete?.bib) {
+        val currentBackendAthlete = athleteState.currentAthlete
+        if (currentBackendAthlete != null && checkedInAthletes.isNotEmpty()) {
+            val backendIndex = checkedInAthletes.indexOfFirst { it.bib == currentBackendAthlete.bib }
+            if (backendIndex >= 0 && backendIndex != currentAthleteIndex) {
+                currentAthleteIndex = backendIndex
+                android.util.Log.d("CompetitionFlow", "🔄 UI synchronized with backend: index $currentAthleteIndex -> athlete ${currentBackendAthlete.name}")
+            }
+        }
+    }
+
     // Start competition with correct athlete count - only once when we have checked-in athletes
     LaunchedEffect(checkedInAthletes.isNotEmpty()) {
         if (checkedInAthletes.isNotEmpty()) {
@@ -978,7 +991,7 @@ fun CompetitionMeasurementScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(maxOf(16f, screenWidth * 0.020f).dp)
+            .padding(maxOf(8f, screenWidth * 0.012f).dp)
     ) {
 
         if (currentAthlete != null) {
@@ -993,15 +1006,17 @@ fun CompetitionMeasurementScreen(
                 onBackToAthletes = onBackToAthletes,
                 onEndCompetition = onEndCompetition,
                 onNextAthlete = {
-                    android.util.Log.d("CompetitionFlow", "Next athlete requested: $currentAthleteIndex -> ${currentAthleteIndex + 1}/${checkedInAthletes.size}")
-                    if (currentAthleteIndex < checkedInAthletes.size - 1) {
-                        // Move to next athlete
-                        currentAthleteIndex++
-                        android.util.Log.d("CompetitionFlow", "Advanced to athlete ${checkedInAthletes[currentAthleteIndex].name}")
-                    } else {
-                        android.util.Log.d("CompetitionFlow", "At last athlete - cycling back to first")
-                        currentAthleteIndex = 0
-                        android.util.Log.d("CompetitionFlow", "Cycled back to first athlete: ${checkedInAthletes[currentAthleteIndex].name}")
+                    android.util.Log.d("CompetitionFlow", "🔴🔴🔴 NEXT BUTTON CLICKED - Current index: $currentAthleteIndex, Total checked-in: ${checkedInAthletes.size}")
+                    // Use backend athlete manager for the actual logic
+                    athleteManager.nextCheckedInAthlete()
+                    // Update local UI state to match backend - find current athlete's index in checked-in list
+                    val currentBackendAthlete = athleteState.currentAthlete
+                    if (currentBackendAthlete != null) {
+                        val newIndex = checkedInAthletes.indexOfFirst { it.bib == currentBackendAthlete.bib }
+                        if (newIndex >= 0) {
+                            currentAthleteIndex = newIndex
+                            android.util.Log.d("CompetitionFlow", "🔴🔴🔴 ADVANCED from index ${if (newIndex > 0) newIndex - 1 else checkedInAthletes.size - 1} to index $newIndex (${currentBackendAthlete.name})")
+                        }
                     }
                 },
                 onPreviousAthlete = {
@@ -2495,6 +2510,26 @@ fun EnhancedAthleteMeasurementScreen(
     val hasMeasurementThisRound = competitionAthlete?.getCurrentRoundMeasurements(currentRound)?.isNotEmpty() ?: false
     val attemptNumber = 1 // Always 1 since only one attempt per round
 
+    // Get athlete-specific measurement for current round - return null to show "--" if no measurement exists
+    val athleteSpecificMeasurement = if (hasMeasurementThisRound) {
+        // Get the actual measurement from the athlete data for the current round
+        val roundMeasurements = competitionAthlete?.getCurrentRoundMeasurements(currentRound)
+        val attempt = roundMeasurements?.firstOrNull()
+        // Convert AthleteAttempt to MeasurementResult
+        attempt?.let {
+            MeasurementResult(
+                athleteBib = currentAthlete.bib,
+                round = currentRound,
+                attemptNumber = 1,
+                distance = it.distance,
+                isValid = it.isValid,
+                isPass = it.isPass
+            )
+        }
+    } else {
+        null
+    }
+
     // Remove next athlete info call to prevent cycling
     val nextAthlete: PolyFieldApiClient.Athlete? = null
     
@@ -2507,7 +2542,7 @@ fun EnhancedAthleteMeasurementScreen(
         Column(
             modifier = modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(8.dp)
         ) {
             // Top 2/3 - Split 50/50 between Athlete Info and Measurement Interface
             Row(
@@ -2518,7 +2553,9 @@ fun EnhancedAthleteMeasurementScreen(
             ) {
                 // Left 50% - Athlete info
                 Column(
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
                 ) {
                     AthleteInfoCard(
                         athlete = currentAthlete,
@@ -2528,14 +2565,17 @@ fun EnhancedAthleteMeasurementScreen(
                         attemptNumber = attemptNumber,
                         screenWidth = screenWidth
                     )
+
                 }
 
                 // Right 50% - Measurement interface
                 Column(
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
                 ) {
                     EnhancedMeasurementInterface(
-                        measurement = measurementState.currentMeasurement,
+                        measurement = athleteSpecificMeasurement,
                         isLoading = measurementManager.isLoading,
                         onMeasure = {
                             android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK: athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
@@ -2570,7 +2610,8 @@ fun EnhancedAthleteMeasurementScreen(
                     measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
                 },
                 onRoundSelected = { round ->
-                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement - click functionality preserved")
+                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement")
+                    measurementManager.setCurrentRound(round)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2583,7 +2624,7 @@ fun EnhancedAthleteMeasurementScreen(
         Column(
             modifier = modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(8.dp)
         ) {
             AthleteInfoCard(
                 athlete = currentAthlete,
@@ -2593,11 +2634,12 @@ fun EnhancedAthleteMeasurementScreen(
                 attemptNumber = attemptNumber,
                 screenWidth = screenWidth
             )
+
             
             Spacer(modifier = Modifier.height(16.dp))
             
             EnhancedMeasurementInterface(
-                measurement = measurementState.currentMeasurement,
+                measurement = athleteSpecificMeasurement,
                 isLoading = measurementManager.isLoading,
                 onMeasure = {
                     android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
@@ -2629,7 +2671,8 @@ fun EnhancedAthleteMeasurementScreen(
                     measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
                 },
                 onRoundSelected = { round ->
-                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement (portrait) - click functionality preserved")
+                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement (portrait)")
+                    measurementManager.setCurrentRound(round)
                 }
             )
         }
@@ -2646,7 +2689,9 @@ fun AthleteInfoCard(
     screenWidth: Int
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -2654,7 +2699,7 @@ fun AthleteInfoCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(12.dp)
         ) {
             // Header with position and round
             Row(
@@ -2689,9 +2734,9 @@ fun AthleteInfoCard(
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             // Athlete info
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2749,7 +2794,9 @@ fun EnhancedMeasurementInterface(
     screenWidth: Int
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)

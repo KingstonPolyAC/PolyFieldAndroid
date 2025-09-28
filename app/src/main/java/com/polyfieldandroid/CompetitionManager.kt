@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  * Handles competition configuration, rules, and state management
  */
 data class CompetitionSettings(
-    val numberOfRounds: Int = 3,
+    val numberOfRounds: Int = 6,
     val athleteCutoff: Int = 8, // Number advancing, or -1 for ALL
     val cutoffEnabled: Boolean = true,
     val reorderAfterRound3: Boolean = true,
@@ -38,7 +38,16 @@ data class CompetitionState(
     val completedAttempts: Map<String, Int> = emptyMap(), // athleteBib -> completed attempts
     val isCalibrated: Boolean = false,
     val roundComplete: Boolean = false,
-    val competitionComplete: Boolean = false
+    val competitionComplete: Boolean = false,
+    val useNextAthleteMode: Boolean = true, // Track if using Next Athlete buttons vs manual round selection
+    val showRoundTransitionPopup: Boolean = false, // Show end-of-round popup
+    val finalRoundSettings: FinalRoundSettings? = null, // Settings from Round 3 dialog
+    val progressingAthletes: List<String> = emptyList() // Bib numbers of athletes progressing to rounds 4-6
+)
+
+data class FinalRoundSettings(
+    val athleteCount: Int, // 6, 8, 10, or -1 for ALL
+    val reorderEnabled: Boolean // Whether to reorder worst-to-best for rounds 4-6
 )
 
 /**
@@ -431,6 +440,71 @@ class CompetitionManagerViewModel(private val context: Context) : ViewModel() {
     fun getCurrentRound(): Int = _competitionState.value.currentRound
     fun getCurrentAthleteIndex(): Int = _competitionState.value.currentAthleteIndex
     fun getSettings(): CompetitionSettings = _competitionState.value.settings
+
+    /**
+     * Set the current athlete index for state persistence
+     */
+    fun setCurrentAthleteIndex(index: Int) {
+        _competitionState.value = _competitionState.value.copy(
+            currentAthleteIndex = index
+        )
+        Log.d(TAG, "Updated current athlete index to: $index")
+    }
+
+    /**
+     * Set the current round directly (for round navigation)
+     */
+    fun setCurrentRound(round: Int) {
+        val maxRounds = _competitionState.value.settings.numberOfRounds
+        if (round in 1..maxRounds) {
+            _competitionState.value = _competitionState.value.copy(
+                currentRound = round,
+                useNextAthleteMode = false // Disable popup system when manually selecting rounds
+            )
+            Log.d(TAG, "Direct navigation to round $round - disabled popup mode")
+        } else {
+            Log.w(TAG, "Invalid round $round. Must be between 1 and $maxRounds")
+        }
+    }
+
+    /**
+     * Set navigation mode (Next Athlete vs manual round selection)
+     */
+    fun setNextAthleteMode(enabled: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            useNextAthleteMode = enabled
+        )
+        Log.d(TAG, "Next Athlete mode: ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    /**
+     * Show round transition popup
+     */
+    fun showRoundTransitionPopup(show: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            showRoundTransitionPopup = show
+        )
+    }
+
+    /**
+     * Set final round settings from Round 3 dialog
+     */
+    fun setFinalRoundSettings(athleteCount: Int, reorderEnabled: Boolean, progressingAthletes: List<String>) {
+        val settings = FinalRoundSettings(athleteCount, reorderEnabled)
+        _competitionState.value = _competitionState.value.copy(
+            finalRoundSettings = settings,
+            progressingAthletes = progressingAthletes
+        )
+        Log.d(TAG, "Final round settings: $athleteCount athletes, reorder: $reorderEnabled")
+    }
+
+    /**
+     * Check if should show round transition popup
+     */
+    fun shouldShowRoundTransitionPopup(completedRound: Int): Boolean {
+        val state = _competitionState.value
+        return state.useNextAthleteMode && completedRound in 1..5 // Rounds 1-5 can trigger popups
+    }
 }
 
 /**

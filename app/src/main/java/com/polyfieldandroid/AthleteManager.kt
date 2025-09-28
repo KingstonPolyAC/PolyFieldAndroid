@@ -318,11 +318,47 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
      */
     fun nextAthlete() {
         val currentState = _athleteState.value
-        val nextIndex = (currentState.currentAthleteIndex + 1) % currentState.rotationOrder.size
-        
-        _athleteState.value = currentState.copy(
-            currentAthleteIndex = nextIndex
-        )
+        val checkedInAthletes = currentState.athletes.filter { it.bib in currentState.checkedInAthletes }
+
+        if (checkedInAthletes.isNotEmpty()) {
+            // COMPETITION MODE: Use checked-in athletes rotation
+            Log.d(TAG, "🔴🔴🔴 NEXT BUTTON CLICKED - Competition mode - Total checked-in: ${checkedInAthletes.size}")
+
+            // Find current athlete in checked-in list
+            val currentAthlete = currentState.rotationOrder.getOrNull(currentState.currentAthleteIndex)
+            val currentCheckedInIndex = checkedInAthletes.indexOfFirst { it.bib == currentAthlete?.bib }
+
+            // Move to next checked-in athlete
+            val nextCheckedInIndex = if (currentCheckedInIndex >= 0) {
+                (currentCheckedInIndex + 1) % checkedInAthletes.size
+            } else {
+                0 // Default to first checked-in athlete if current not found
+            }
+
+            val nextAthlete = checkedInAthletes[nextCheckedInIndex]
+
+            // Find this athlete's position in rotation order
+            val nextIndex = currentState.rotationOrder.indexOfFirst { it.bib == nextAthlete.bib }
+
+            if (nextIndex >= 0) {
+                _athleteState.value = currentState.copy(
+                    currentAthleteIndex = nextIndex
+                )
+
+                Log.d(TAG, "🔴🔴🔴 COMPETITION MODE ADVANCED from ${currentAthlete?.name ?: "unknown"} to ${nextAthlete.name} (index $nextIndex)")
+            }
+        } else {
+            // DIRECT MODE: Use original rotation order logic for direct athlete selection
+            Log.d(TAG, "🔴🔴🔴 NEXT BUTTON CLICKED - Direct mode - Current index: ${currentState.currentAthleteIndex}, Total athletes: ${currentState.rotationOrder.size}")
+
+            val nextIndex = (currentState.currentAthleteIndex + 1) % currentState.rotationOrder.size
+
+            _athleteState.value = currentState.copy(
+                currentAthleteIndex = nextIndex
+            )
+
+            Log.d(TAG, "🔴🔴🔴 DIRECT MODE ADVANCED from index ${currentState.currentAthleteIndex} to index $nextIndex")
+        }
     }
     
     /**
@@ -547,7 +583,41 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
 
         Log.d(TAG, "Selected athlete: ${athlete.name} (${athlete.bib}) at rotation index $rotationIndex. Total athletes: ${updatedAthletes.size}")
     }
-    
+
+    /**
+     * Navigate to next checked-in athlete (for competition mode)
+     * This mimics the working green button logic from CompetitionFlowScreens
+     */
+    fun nextCheckedInAthlete() {
+        val currentState = _athleteState.value
+        val checkedInAthletes = currentState.athletes.filter { it.bib in currentState.checkedInAthletes }
+
+        if (checkedInAthletes.isEmpty()) {
+            Log.w(TAG, "🔴🔴🔴 NEXT BUTTON CLICKED but no checked-in athletes!")
+            return
+        }
+
+        // Find current athlete's position in checked-in list
+        val currentCheckedInIndex = if (currentState.currentAthlete != null) {
+            checkedInAthletes.indexOfFirst { it.bib == currentState.currentAthlete.bib }
+        } else 0
+
+        val oldIndex = if (currentCheckedInIndex >= 0) currentCheckedInIndex else 0
+        val newIndex = (oldIndex + 1) % checkedInAthletes.size
+        val nextAthlete = checkedInAthletes[newIndex]
+
+        Log.d(TAG, "🔴🔴🔴 NEXT BUTTON CLICKED - Current index: $oldIndex, Total checked-in: ${checkedInAthletes.size}")
+        Log.d(TAG, "🔴🔴🔴 ADVANCED from index $oldIndex (${checkedInAthletes.getOrNull(oldIndex)?.name ?: "none"}) to index $newIndex (${nextAthlete.name})")
+
+        // Convert CompetitionAthlete to PolyFieldApiClient.Athlete and select
+        val serverAthlete = PolyFieldApiClient.Athlete(
+            bib = nextAthlete.bib,
+            order = nextAthlete.order,
+            name = nextAthlete.name,
+            club = nextAthlete.club
+        )
+        selectAthlete(serverAthlete)
+    }
 
     // Convenience getters
     fun getSelectedAthletes(): List<CompetitionAthlete> = _athleteState.value.selectedAthletes

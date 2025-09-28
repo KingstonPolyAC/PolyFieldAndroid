@@ -721,46 +721,6 @@ class CompetitionMeasurementManager(
         return competitionAthlete?.getMeasurementCount(competitionState.currentRound) ?: 0 > 0
     }
     
-    /**
-     * Advance to next athlete in rotation
-     */
-    fun advanceToNextAthlete() {
-        val athleteState = athleteManager.athleteState.value
-        val competitionState = competitionManager.competitionState.value
-        
-        if (athleteState.rotationOrder.isEmpty()) return
-        
-        val currentIndex = athleteState.currentAthleteIndex
-        val nextIndex = (currentIndex + 1) % athleteState.rotationOrder.size
-        
-        // If we've completed a full rotation, check for round advancement
-        if (nextIndex == 0) {
-            val allCompleted = athleteState.rotationOrder.all { athlete ->
-                athlete.getMeasurementCount(competitionState.currentRound) > 0
-            }
-            
-            if (allCompleted && competitionState.currentRound < 6) {
-                // Check which round completion scenario
-                when (competitionState.currentRound) {
-                    3 -> {
-                        // Round 3: Need cutoff selection AND reordering option
-                        Log.d(TAG, "Round 3 complete - awaiting cutoff and reordering selection")
-                    }
-                    4, 5 -> {
-                        // Rounds 4 & 5: Need reordering option only
-                        Log.d(TAG, "Round ${competitionState.currentRound} complete - awaiting reordering selection")
-                    }
-                    else -> {
-                        // Other rounds: Auto-advance
-                        competitionManager.advanceToNextRound()
-                    }
-                }
-            }
-        }
-        
-        athleteManager.nextAthlete()
-        Log.d(TAG, "Advanced to next athlete: index $nextIndex")
-    }
     
     /**
      * Record foul for athlete
@@ -806,20 +766,31 @@ class CompetitionMeasurementManager(
         // For now, just clear the measurement for the round - allows re-measurement
         val currentAthletes = athleteManager.athleteState.value.athletes.toMutableList()
         val athleteIndex = currentAthletes.indexOfFirst { it.bib == athleteBib }
-        
+
         if (athleteIndex != -1) {
             val athlete = currentAthletes[athleteIndex]
             val updatedMeasurements = athlete.attempts.toMutableList()
             updatedMeasurements.removeAll { it.round == round }
-            
+
             val updatedAthlete = athlete.copy(attempts = updatedMeasurements)
             currentAthletes[athleteIndex] = updatedAthlete
-            
+
             // Update athlete state (this needs to be done through AthleteManager)
             // For now just log the action
             Log.d(TAG, "Cleared measurement for athlete $athleteBib, round $round")
         }
     }
+
+    /**
+     * Set current round (public wrapper for competition manager)
+     */
+    fun setCurrentRound(round: Int) {
+        competitionManager.setCurrentRound(round)
+        Log.d(TAG, "Set current round to: $round")
+    }
+
+    // Public access to competition state for reactive UI
+    val competitionState get() = competitionManager.competitionState
 }
 
 /**

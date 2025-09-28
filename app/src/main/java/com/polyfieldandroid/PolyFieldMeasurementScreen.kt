@@ -387,7 +387,24 @@ fun BottomNavigationExact(
             // Next/New Event button - hide on heat map screen
             if (currentScreen != "HEAT_MAP") {
                 Button(
-                    onClick = if (currentScreen == "MEASUREMENT") onNewEventClick else onNextClick,
+                    onClick = {
+                        android.util.Log.d("BottomNavDebug", "🔵 Bottom Nav Next Athlete button clicked for screen: $currentScreen")
+                        if (currentScreen == "MEASUREMENT") {
+                            try {
+                                onNewEventClick()
+                                android.util.Log.d("BottomNavDebug", "🔵 onNewEventClick completed successfully")
+                            } catch (e: Exception) {
+                                android.util.Log.e("BottomNavDebug", "🔴 Error in onNewEventClick: ${e.message}", e)
+                            }
+                        } else {
+                            try {
+                                onNextClick()
+                                android.util.Log.d("BottomNavDebug", "🔵 onNextClick completed successfully")
+                            } catch (e: Exception) {
+                                android.util.Log.e("BottomNavDebug", "🔴 Error in onNextClick: ${e.message}", e)
+                            }
+                        }
+                    },
                     enabled = if (currentScreen == "MEASUREMENT") true else canGoForward,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(25.dp),
@@ -400,6 +417,7 @@ fun BottomNavigationExact(
                         text = when (currentScreen) {
                             "MEASUREMENT" -> "New Event"
                             "COMPETITION_ACTIVE_CONNECTED" -> "Start"
+                            "COMPETITION_MEASUREMENT_CONNECTED" -> "Next Athlete"
                             else -> "Next →"
                         },
                         fontSize = 16.sp,

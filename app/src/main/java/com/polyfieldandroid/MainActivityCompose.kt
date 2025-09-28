@@ -214,14 +214,14 @@ fun CalibrationSectorLineScreen(
             ) {
                 Text(
                     text = "Sector Line Check Mark",
-                    style = MaterialTheme.typography.headlineSmall,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2),
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
                 Text(
                     text = "Place the prism on the right-hand sector line and click measure.",
-                    style = MaterialTheme.typography.bodyLarge,
+                    fontSize = 16.sp,
                     color = Color(0xFF333333),
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
@@ -290,7 +290,7 @@ fun CalibrationSectorLineScreen(
                 }
                 Text(
                     text = if (calibration.sectorLineSet) "Re-measure" else "Measure",
-                    fontSize = 16.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -2848,6 +2848,9 @@ fun PolyFieldApp(
     val uiState by viewModel.uiState.collectAsState()
     val modeState by modeManager.modeState.collectAsState()
     val configuration = LocalConfiguration.current
+
+    // Store reference to working onNextAthlete callback from CompetitionMeasurementScreen
+    var competitionNextAthleteCallback: (() -> Unit)? by remember { mutableStateOf(null) }
     
     // Force recomposition on orientation changes to prevent UI artifacts
     key(configuration.orientation) {
@@ -3056,6 +3059,12 @@ fun PolyFieldApp(
                             athleteManager = athleteManager,
                             onAthleteSelected = { athlete ->
                                 // Navigate directly to this athlete for measurement
+                                // First activate competition (this resets to athlete index 0)
+                                competitionManager.startCompetition(
+                                    selectedEvent = selectedEvent,
+                                    totalAthletes = athleteManager.getTotalAthletes()
+                                )
+                                // Then select the specific athlete (this sets the correct index)
                                 athleteManager.selectAthlete(athlete)
                                 measurementManager.startCompetitionWithAthlete(athlete)
                                 viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
@@ -3063,6 +3072,11 @@ fun PolyFieldApp(
                             onStartCompetition = {
                                 // Start competition with all checked-in athletes
                                 measurementManager.startCompetition()
+                                // Activate competition when navigating to measurement screen
+                                competitionManager.startCompetition(
+                                    selectedEvent = selectedEvent,
+                                    totalAthletes = athleteManager.getTotalAthletes()
+                                )
                                 viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
                             }
                         )
@@ -3085,6 +3099,13 @@ fun PolyFieldApp(
                                 // Reset competition and go back to event selection
                                 measurementManager.endCompetition()
                                 viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                            },
+                            onNextAthlete = {
+                                android.util.Log.d("MainActivity", "🔴🔴🔴 NEXT BUTTON CLICKED in MainActivity - Next athlete functionality handled by CompetitionMeasurementScreen")
+                                // Next athlete functionality is handled internally by CompetitionMeasurementScreen
+                                // The internal onNextAthlete callback from CompetitionMeasurementScreen is the working logic
+                                // We need to pass this actual working function to the navigation system
+                                // This callback will be set by CompetitionMeasurementScreen
                             }
                         )
                     } ?: run {
@@ -3273,13 +3294,13 @@ fun PolyFieldApp(
             currentScreen = uiState.currentScreen,
             eventType = uiState.eventType,
             canGoBack = canGoBack(uiState.currentScreen),
-            canGoForward = canGoForward(uiState.currentScreen),
+            canGoForward = canGoForward(uiState.currentScreen, athleteManager, competitionManager),
             showHeatMapButton = uiState.currentScreen == "MEASUREMENT" && uiState.eventType == "Throws",
             showResultsButton = uiState.currentScreen.contains("COMPETITION") && 
                               (uiState.currentScreen == "COMPETITION_ACTIVE_CONNECTED" || 
                                uiState.currentScreen == "COMPETITION_MEASUREMENT_CONNECTED"),
             onBackClick = { navigateBack(viewModel, uiState) },
-            onNextClick = { navigateForward(viewModel, uiState, athleteManager) },
+            onNextClick = { navigateForward(viewModel, uiState, athleteManager, competitionNextAthleteCallback) },
             onHeatMapClick = { viewModel.toggleHeatMap() },
             onResultsClick = { 
                 viewModel.updateScreen("COMPETITION_RESULTS_CONNECTED") 
@@ -3314,14 +3335,18 @@ private fun canGoBack(screen: String): Boolean {
     return screen != "SELECT_EVENT_TYPE" && screen != "SETTINGS"
 }
 
-private fun canGoForward(screen: String): Boolean {
+private fun canGoForward(screen: String, athleteManager: AthleteManagerViewModel? = null, competitionManager: CompetitionManagerViewModel? = null): Boolean {
     return when (screen) {
-        "SELECT_EVENT_TYPE", "DEVICE_SETUP", "DEVICE_SETUP_CONNECTED", 
+        "SELECT_EVENT_TYPE", "DEVICE_SETUP", "DEVICE_SETUP_CONNECTED",
         "CALIBRATION_SELECT_CIRCLE", "CALIBRATION_SELECT_CIRCLE_CONNECTED",
         "CALIBRATION_SET_CENTRE", "CALIBRATION_SET_CENTRE_CONNECTED",
         "CALIBRATION_VERIFY_EDGE", "CALIBRATION_VERIFY_EDGE_CONNECTED",
         "CALIBRATION_SECTOR_LINE", "CALIBRATION_SECTOR_LINE_CONNECTED",
         "COMPETITION_ACTIVE_CONNECTED" -> true
+        "COMPETITION_MEASUREMENT_CONNECTED" -> {
+            // Enable Next button for competition measurement screen
+            true
+        }
         "HEAT_MAP" -> false // Remove next button from heat map
         else -> false
     }
@@ -3551,7 +3576,8 @@ private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
     viewModel.updateScreen(previousScreen)
 }
 
-private fun navigateForward(viewModel: AppViewModel, uiState: AppState, athleteManager: AthleteManagerViewModel? = null) {
+private fun navigateForward(viewModel: AppViewModel, uiState: AppState, athleteManager: AthleteManagerViewModel? = null, competitionNextAthleteCallback: (() -> Unit)? = null) {
+    android.util.Log.d("NavigationDebug", "🟡 navigateForward called for screen: ${uiState.currentScreen}")
     val nextScreen = when (uiState.currentScreen) {
         "SELECT_EVENT_TYPE" -> "DEVICE_SETUP"
         "DEVICE_SETUP" -> if (uiState.eventType == "Throws") "CALIBRATION_SELECT_CIRCLE" else "MEASUREMENT"
@@ -3583,10 +3609,15 @@ private fun navigateForward(viewModel: AppViewModel, uiState: AppState, athleteM
         "CALIBRATION_SECTOR_LINE_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
         "COMPETITION_ACTIVE_CONNECTED" -> "COMPETITION_MEASUREMENT_CONNECTED"
         "COMPETITION_MEASUREMENT_CONNECTED" -> {
-            // Move to next athlete instead of changing screen
-            android.util.Log.d("Navigation", "Next button clicked on measurement screen - calling nextAthlete()")
-            athleteManager?.nextAthlete()
-            android.util.Log.d("Navigation", "nextAthlete() called successfully")
+            // Use the working onNextAthlete callback from CompetitionMeasurementScreen
+            android.util.Log.d("Navigation", "🔴 Navigation-level Next Athlete button clicked")
+            competitionNextAthleteCallback?.let { callback ->
+                android.util.Log.d("Navigation", "🔴 Calling stored working next athlete callback")
+                callback()
+            } ?: run {
+                android.util.Log.w("Navigation", "🔴 No stored next athlete callback available, falling back to AthleteManager")
+                athleteManager?.nextCheckedInAthlete()
+            }
             uiState.currentScreen // Stay on measurement screen
         }
         else -> uiState.currentScreen
