@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import android.util.Log
 
 /**
  * Main competition flow screens that integrate all modules
@@ -920,6 +921,7 @@ fun CompetitionMeasurementScreen(
     onBackToAthletes: () -> Unit,
     onEndCompetition: () -> Unit,
     onNextAthlete: () -> Unit = {},
+    onRegisterNextAthleteCallback: ((callback: () -> Unit) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val athleteState by athleteManager.athleteState.collectAsState()
@@ -976,6 +978,45 @@ fun CompetitionMeasurementScreen(
         }
     }
 
+    // Define the callback with popup logic
+    val nextAthleteCallback: () -> Unit = {
+        Log.d("CompetitionFlow", "🔵 Next Athlete callback executed with popup logic")
+
+        // Check if all athletes have measurements for this round BEFORE advancing
+        val allCompletedThisRound = checkedInAthletes.all { athlete ->
+            measurementState.measurementHistory.any { measurement ->
+                measurement.athleteBib == athlete.bib &&
+                measurement.round == competitionState.currentRound &&
+                (measurement.distance != null && measurement.distance > 0 ||
+                 measurement.isPass ||
+                 !measurement.isValid) // Covers distance, pass (P), and foul (X)
+            }
+        }
+
+        Log.d("CompetitionFlow", "🔵 Round completion check: allCompleted=$allCompletedThisRound, round=${competitionState.currentRound}")
+
+        if (allCompletedThisRound && competitionState.currentRound in 1..5) {
+            Log.d("CompetitionFlow", "🔵 Triggering round transition popup")
+            measurementManager.showRoundTransitionPopup(true)
+        } else {
+            Log.d("CompetitionFlow", "🔵 Advancing to next athlete without popup")
+            // Advance to next athlete locally first
+            if (currentAthleteIndex < checkedInAthletes.size - 1) {
+                currentAthleteIndex++
+                Log.d("CompetitionFlow", "🔵 Advanced to next athlete index: $currentAthleteIndex")
+            } else {
+                currentAthleteIndex = 0 // Wrap around to first athlete
+                Log.d("CompetitionFlow", "🔵 Wrapped around to first athlete")
+            }
+        }
+    }
+
+    // Register the callback with the parent navigation system
+    LaunchedEffect(onRegisterNextAthleteCallback) {
+        onRegisterNextAthleteCallback?.invoke(nextAthleteCallback)
+        Log.d("CompetitionFlow", "🔵 Registered Next Athlete callback with navigation system")
+    }
+
     // Start competition with correct athlete count - only once when we have checked-in athletes
     LaunchedEffect(checkedInAthletes.isNotEmpty()) {
         if (checkedInAthletes.isNotEmpty()) {
@@ -1005,20 +1046,7 @@ fun CompetitionMeasurementScreen(
                 totalRounds = 6,
                 onBackToAthletes = onBackToAthletes,
                 onEndCompetition = onEndCompetition,
-                onNextAthlete = {
-                    android.util.Log.d("CompetitionFlow", "🔴🔴🔴 NEXT BUTTON CLICKED - Current index: $currentAthleteIndex, Total checked-in: ${checkedInAthletes.size}")
-                    // Use backend athlete manager for the actual logic
-                    athleteManager.nextCheckedInAthlete()
-                    // Update local UI state to match backend - find current athlete's index in checked-in list
-                    val currentBackendAthlete = athleteState.currentAthlete
-                    if (currentBackendAthlete != null) {
-                        val newIndex = checkedInAthletes.indexOfFirst { it.bib == currentBackendAthlete.bib }
-                        if (newIndex >= 0) {
-                            currentAthleteIndex = newIndex
-                            android.util.Log.d("CompetitionFlow", "🔴🔴🔴 ADVANCED from index ${if (newIndex > 0) newIndex - 1 else checkedInAthletes.size - 1} to index $newIndex (${currentBackendAthlete.name})")
-                        }
-                    }
-                },
+                onNextAthlete = nextAthleteCallback,
                 onPreviousAthlete = {
                     android.util.Log.d("CompetitionFlow", "Previous athlete requested: $currentAthleteIndex -> ${currentAthleteIndex - 1}")
                     if (currentAthleteIndex > 0) {
@@ -1066,6 +1094,13 @@ fun CompetitionMeasurementScreen(
                 }
             }
         }
+
+        // Handle round completion dialogs
+        HandleRoundCompletionDialogs(
+            measurementState = measurementState,
+            measurementManager = measurementManager,
+            onEndCompetition = onEndCompetition
+        )
     }
 }
 
@@ -1503,8 +1538,63 @@ fun HandleRoundCompletionDialogs(
     measurementManager: CompetitionMeasurementManager,
     onEndCompetition: () -> Unit
 ) {
-    // TODO: Implement round completion dialogs for cuts, reordering, and continue/end decisions
-    // This will be a complex dialog system that we can implement in the next iteration
+    val competitionState by measurementManager.competitionState.collectAsState()
+
+    // Show round transition popup when triggered
+    if (competitionState.showRoundTransitionPopup) {
+        AlertDialog(
+            onDismissRequest = {
+                measurementManager.showRoundTransitionPopup(false)
+            },
+            title = {
+                Text(
+                    text = "Round ${competitionState.currentRound} Complete",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "All athletes have completed round ${competitionState.currentRound}. Ready to advance to round ${competitionState.currentRound + 1}?",
+                    fontSize = 16.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        measurementManager.showRoundTransitionPopup(false)
+                        measurementManager.advanceToNextRound()
+                        android.util.Log.d("BottomNavDebug", "🔵 onContinueToNextRound completed successfully")
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1976D2)
+                    )
+                ) {
+                    Text(
+                        text = "Continue to Round ${competitionState.currentRound + 1}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = {
+                        measurementManager.showRoundTransitionPopup(false)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE0E0E0),
+                        contentColor = Color(0xFF333333)
+                    )
+                ) {
+                    Text(
+                        text = "Stay in Round ${competitionState.currentRound}",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        )
+    }
 }
 
 /**

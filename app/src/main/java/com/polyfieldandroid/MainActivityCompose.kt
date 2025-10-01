@@ -3106,6 +3106,10 @@ fun PolyFieldApp(
                                 // The internal onNextAthlete callback from CompetitionMeasurementScreen is the working logic
                                 // We need to pass this actual working function to the navigation system
                                 // This callback will be set by CompetitionMeasurementScreen
+                            },
+                            onRegisterNextAthleteCallback = { callback ->
+                                android.util.Log.d("MainActivity", "🔵 Storing Next Athlete callback from CompetitionMeasurementScreen")
+                                competitionNextAthleteCallback = callback
                             }
                         )
                     } ?: run {

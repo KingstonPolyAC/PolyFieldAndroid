@@ -789,6 +789,22 @@ class CompetitionMeasurementManager(
         Log.d(TAG, "Set current round to: $round")
     }
 
+    /**
+     * Show round transition popup (public wrapper for competition manager)
+     */
+    fun showRoundTransitionPopup(show: Boolean) {
+        competitionManager.showRoundTransitionPopup(show)
+        Log.d(TAG, "Round transition popup: $show")
+    }
+
+    /**
+     * Advance to next round (public wrapper for competition manager)
+     */
+    fun advanceToNextRound() {
+        competitionManager.advanceToNextRound()
+        Log.d(TAG, "Advanced to next round")
+    }
+
     // Public access to competition state for reactive UI
     val competitionState get() = competitionManager.competitionState
 }
