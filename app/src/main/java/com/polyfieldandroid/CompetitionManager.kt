@@ -42,12 +42,36 @@ data class CompetitionState(
     val useNextAthleteMode: Boolean = true, // Track if using Next Athlete buttons vs manual round selection
     val showRoundTransitionPopup: Boolean = false, // Show end-of-round popup
     val finalRoundSettings: FinalRoundSettings? = null, // Settings from Round 3 dialog
-    val progressingAthletes: List<String> = emptyList() // Bib numbers of athletes progressing to rounds 4-6
+    val progressingAthletes: List<String> = emptyList(), // Bib numbers of athletes progressing to rounds 4-6
+    val athleteCutState: AthleteCutState = AthleteCutState() // State for athlete cut and reordering
 )
 
 data class FinalRoundSettings(
     val athleteCount: Int, // 6, 8, 10, or -1 for ALL
     val reorderEnabled: Boolean // Whether to reorder worst-to-best for rounds 4-6
+)
+
+/**
+ * Performance data for a specific round
+ */
+data class RoundData(
+    val round: Int,
+    val bestDistance: Double,
+    val attempts: List<String> // e.g., ["12.34", "FOUL", "12.56"]
+)
+
+/**
+ * State for athlete cut and reordering functionality
+ */
+data class AthleteCutState(
+    val showCutPopup: Boolean = false,           // First popup: select advancing count
+    val showProgressionPopup: Boolean = false,   // Second popup: show advancing/eliminated
+    val showReorderPopup: Boolean = false,       // For rounds 4-5, 5-6 reorder only
+    val selectedAthleteCount: Int = 8,           // Number advancing (4, 6, 8, 10, or -1 for ALL)
+    val reorderEnabled: Boolean = false,         // Whether to reorder worst-to-best
+    val athleteRankings: List<AthleteRanking> = emptyList(), // Current rankings
+    val advancingAthletes: List<AthleteRanking> = emptyList(), // Athletes moving forward
+    val eliminatedAthletes: List<AthleteRanking> = emptyList() // Athletes being cut
 )
 
 /**
@@ -504,6 +528,271 @@ class CompetitionManagerViewModel(private val context: Context) : ViewModel() {
     fun shouldShowRoundTransitionPopup(completedRound: Int): Boolean {
         val state = _competitionState.value
         return state.useNextAthleteMode && completedRound in 1..5 // Rounds 1-5 can trigger popups
+    }
+
+    /**
+     * Athlete Cut and Reordering Management
+     */
+
+    /**
+     * Show athlete cut popup (Round 3-4 transition)
+     */
+    fun showAthleteCutPopup(show: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                showCutPopup = show
+            )
+        )
+        Log.d(TAG, "Athlete cut popup: ${if (show) "shown" else "hidden"}")
+    }
+
+    /**
+     * Show athlete progression confirmation popup
+     */
+    fun showProgressionConfirmationPopup(show: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                showProgressionPopup = show
+            )
+        )
+        Log.d(TAG, "Progression confirmation popup: ${if (show) "shown" else "hidden"}")
+    }
+
+    /**
+     * Show reorder confirmation popup (Round 4-5, 5-6 transitions)
+     */
+    fun showReorderConfirmationPopup(show: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                showReorderPopup = show
+            )
+        )
+        Log.d(TAG, "Reorder confirmation popup: ${if (show) "shown" else "hidden"}")
+    }
+
+    /**
+     * Update athlete cut selection (4, 6, 8, 10, or -1 for ALL)
+     */
+    fun setSelectedAthleteCount(count: Int) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                selectedAthleteCount = count
+            )
+        )
+        Log.d(TAG, "Selected athlete count: ${if (count == -1) "ALL" else count}")
+    }
+
+    /**
+     * Update reordering preference
+     */
+    fun setReorderEnabled(enabled: Boolean) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                reorderEnabled = enabled
+            )
+        )
+        Log.d(TAG, "Reorder enabled: $enabled")
+    }
+
+    /**
+     * Calculate athlete rankings based on measurement history (placeholder)
+     */
+    fun calculateAthleteRankings(): List<AthleteRanking> {
+        // TODO: Implement proper athlete rankings calculation
+        return emptyList()
+    }
+
+    /*
+    // Original implementation - commented out for now due to data type issues
+    fun calculateAthleteRankings(measurementHistory: List<CompetitionMeasurement>, checkedInAthletes: List<PolyFieldApiClient.Athlete>): List<AthleteRanking> {
+        // Group measurements by athlete
+        val athletePerformances = measurementHistory
+            .filter { it.distance != null && it.distance > 0 } // Only valid distances
+            .groupBy { it.athleteBib }
+
+        // Calculate rankings
+        val rankings = checkedInAthletes.mapNotNull { athlete ->
+            val performances = athletePerformances[athlete.bib] ?: return@mapNotNull null
+            val bestMark = performances.maxOfOrNull { it.distance ?: 0.0 } ?: 0.0
+
+            // Calculate round data
+            val roundData = (1.._competitionState.value.currentRound).map { round ->
+                val roundPerformances = performances.filter { it.round == round }
+                val roundBest = roundPerformances.maxOfOrNull { it.distance ?: 0.0 } ?: 0.0
+                val attempts = roundPerformances.map { measurement ->
+                    when {
+                        measurement.distance != null && measurement.distance > 0 -> String.format("%.2f", measurement.distance)
+                        measurement.isPass -> "PASS"
+                        !measurement.isValid -> "FOUL"
+                        else -> "---"
+                    }
+                }
+                RoundData(round, roundBest, attempts)
+            }
+
+            AthleteRanking(
+                athleteBib = athlete.bib,
+                athleteName = athlete.name,
+                bestMark = bestMark,
+                position = 0, // Will be set after sorting
+                roundData = roundData
+            )
+        }.sortedByDescending { it.bestMark } // Sort by best performance (descending)
+         .mapIndexed { index, ranking -> ranking.copy(position = index + 1) } // Assign positions
+
+        Log.d(TAG, "Calculated ${rankings.size} athlete rankings")
+        return rankings
+    }
+    */
+
+    /**
+     * Calculate athlete cut using stored selectedAthleteCount - fixes the bug
+     */
+    fun calculateAndSetAthleteCut(measurementManager: CompetitionMeasurementManager? = null) {
+        val rankings = if (measurementManager != null) {
+            // Use real athlete data from athlete manager
+            measurementManager.getRealAthleteRankings()
+        } else {
+            // Fallback to dummy data for testing
+            generateAthleteRankingsFromAthletes()
+        }
+
+        val cutState = _competitionState.value.athleteCutState
+        val selectedCount = cutState.selectedAthleteCount
+
+        Log.d(TAG, "Calculating athlete cut with selected count: $selectedCount using ${if (measurementManager != null) "real" else "dummy"} athlete data")
+
+        // Convert 999 ("All") to actual count
+        val actualCutCount = if (selectedCount == 999) -1 else selectedCount
+
+        val (advancing, eliminated) = calculateAthleteCut(rankings, actualCutCount)
+
+        setAthleteRankings(rankings)
+        setAthleteCutResults(advancing, eliminated)
+
+        Log.d(TAG, "Set athlete cut results: ${advancing.size} advancing, ${eliminated.size} eliminated")
+    }
+
+    /**
+     * Generate simple athlete rankings for demonstration - placeholder implementation
+     */
+    fun generateAthleteRankingsFromAthletes(): List<AthleteRanking> {
+        // For now, create dummy rankings to test the UI flow
+        // This will be replaced with actual athlete data integration
+        val dummyAthletes = listOf(
+            createDummyAthlete("John Smith", 1, 15.75),
+            createDummyAthlete("Sarah Johnson", 2, 14.23),
+            createDummyAthlete("Mike Brown", 3, 13.89),
+            createDummyAthlete("Lisa Davis", 4, 13.45),
+            createDummyAthlete("Tom Wilson", 5, 12.98),
+            createDummyAthlete("Emma Taylor", 6, 12.67),
+            createDummyAthlete("David Lee", 7, 12.34),
+            createDummyAthlete("Amy Clark", 8, 11.92),
+            createDummyAthlete("Chris Martinez", 9, 11.55),
+            createDummyAthlete("Rachel White", 10, 11.12)
+        )
+
+        Log.d(TAG, "Generated ${dummyAthletes.size} dummy athlete rankings for testing")
+        return dummyAthletes
+    }
+
+    private fun createDummyAthlete(name: String, bib: Int, bestMark: Double): AthleteRanking {
+        val dummyAthlete = CompetitionAthlete(
+            bib = bib.toString(),
+            order = bib,
+            name = name,
+            club = "Test Club"
+        )
+
+        return AthleteRanking(
+            position = bib,
+            athlete = dummyAthlete,
+            bestMark = bestMark,
+            isAdvancing = true
+        )
+    }
+
+    /**
+     * Set athlete rankings in state
+     */
+    fun setAthleteRankings(rankings: List<AthleteRanking>) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                athleteRankings = rankings
+            )
+        )
+    }
+
+    /**
+     * Calculate advancing and eliminated athletes for Round 3-4 cut
+     */
+    fun calculateAthleteCut(rankings: List<AthleteRanking>, cutCount: Int): Pair<List<AthleteRanking>, List<AthleteRanking>> {
+        val effectiveCutCount = if (cutCount == -1) rankings.size else minOf(cutCount, rankings.size)
+
+        val advancing = rankings.take(effectiveCutCount).map { it.copy(isAdvancing = true) }
+        val eliminated = rankings.drop(effectiveCutCount).map { it.copy(isAdvancing = false) }
+
+        Log.d(TAG, "Athlete cut: ${advancing.size} advancing, ${eliminated.size} eliminated")
+        return Pair(advancing, eliminated)
+    }
+
+    /**
+     * Set advancing and eliminated athletes
+     */
+    fun setAthleteCutResults(advancing: List<AthleteRanking>, eliminated: List<AthleteRanking>) {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = _competitionState.value.athleteCutState.copy(
+                advancingAthletes = advancing,
+                eliminatedAthletes = eliminated
+            )
+        )
+    }
+
+    /**
+     * Apply athlete cut and advance to next round
+     */
+    fun applyAthleteCutAndAdvance() {
+        val cutState = _competitionState.value.athleteCutState
+        val advancingBibs = cutState.advancingAthletes.map { it.athlete.bib }
+
+        // Update competition state with cut results
+        _competitionState.value = _competitionState.value.copy(
+            progressingAthletes = advancingBibs,
+            athleteCutState = cutState.copy(
+                showCutPopup = false,
+                showProgressionPopup = false
+            )
+        )
+
+        // Advance to next round
+        advanceToNextRound()
+        Log.d(TAG, "Applied athlete cut and advanced to round ${_competitionState.value.currentRound}")
+    }
+
+    /**
+     * Apply athlete cut (placeholder)
+     */
+    fun applyAthleteCut() {
+        // TODO: Implement athlete cut logic
+        Log.d(TAG, "Applied athlete cut")
+    }
+
+    /**
+     * Apply athlete reorder (placeholder)
+     */
+    fun applyAthleteReorder() {
+        // TODO: Implement athlete reorder logic
+        Log.d(TAG, "Applied athlete reorder")
+    }
+
+    /**
+     * Reset athlete cut state (placeholder)
+     */
+    fun resetAthleteCutState() {
+        _competitionState.value = _competitionState.value.copy(
+            athleteCutState = AthleteCutState()
+        )
+        Log.d(TAG, "Reset athlete cut state")
     }
 }
 

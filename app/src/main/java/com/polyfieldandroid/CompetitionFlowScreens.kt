@@ -996,8 +996,21 @@ fun CompetitionMeasurementScreen(
         Log.d("CompetitionFlow", "🔵 Round completion check: allCompleted=$allCompletedThisRound, round=${competitionState.currentRound}")
 
         if (allCompletedThisRound && competitionState.currentRound in 1..5) {
-            Log.d("CompetitionFlow", "🔵 Triggering round transition popup")
-            measurementManager.showRoundTransitionPopup(true)
+            Log.d("CompetitionFlow", "🔵 Triggering round transition popup for round ${competitionState.currentRound}")
+            when (competitionState.currentRound) {
+                3 -> {
+                    // Round 3-4 transition: Show athlete cut popup
+                    measurementManager.showAthleteCutPopup(true)
+                }
+                in 4..5 -> {
+                    // Round 4-5 and 5-6 transitions: Show reorder confirmation popup only
+                    measurementManager.showReorderConfirmationPopup(true)
+                }
+                else -> {
+                    // Rounds 1-2 and 2-3: Show standard popup
+                    measurementManager.showRoundTransitionPopup(true)
+                }
+            }
         } else {
             Log.d("CompetitionFlow", "🔵 Advancing to next athlete without popup")
             // Advance to next athlete locally first
@@ -1540,7 +1553,7 @@ fun HandleRoundCompletionDialogs(
 ) {
     val competitionState by measurementManager.competitionState.collectAsState()
 
-    // Show round transition popup when triggered
+    // Show standard round transition popup (rounds 1-2, 2-3)
     if (competitionState.showRoundTransitionPopup) {
         AlertDialog(
             onDismissRequest = {
@@ -1595,6 +1608,382 @@ fun HandleRoundCompletionDialogs(
             }
         )
     }
+
+    // Show athlete cut popup (round 3-4)
+    if (competitionState.athleteCutState.showCutPopup) {
+        AthleteCutDialog(
+            currentRound = competitionState.currentRound,
+            measurementManager = measurementManager
+        )
+    }
+
+    // Show athlete progression confirmation popup (round 3-4)
+    if (competitionState.athleteCutState.showProgressionPopup) {
+        AthleteProgressionDialog(
+            measurementManager = measurementManager
+        )
+    }
+
+    // Show reorder confirmation popup (round 4-5, 5-6)
+    if (competitionState.athleteCutState.showReorderPopup) {
+        ReorderConfirmationDialog(
+            currentRound = competitionState.currentRound,
+            measurementManager = measurementManager
+        )
+    }
+}
+
+@Composable
+fun AthleteCutDialog(
+    currentRound: Int,
+    measurementManager: CompetitionMeasurementManager
+) {
+    var selectedAthleteCount by remember { mutableIntStateOf(8) }
+    var reorderEnabled by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = {
+            measurementManager.showAthleteCutPopup(false)
+        },
+        title = {
+            Text(
+                text = "Round $currentRound Complete - Athlete Selection",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "How many athletes should advance to the final rounds?",
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // Athlete count selection
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    listOf(4, 6, 8, 10).forEach { count ->
+                        FilterChip(
+                            onClick = { selectedAthleteCount = count },
+                            label = { Text("$count") },
+                            selected = selectedAthleteCount == count
+                        )
+                    }
+                    FilterChip(
+                        onClick = { selectedAthleteCount = 999 }, // Use 999 to represent "All"
+                        label = { Text("All") },
+                        selected = selectedAthleteCount == 999
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Reorder option
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = reorderEnabled,
+                        onCheckedChange = { reorderEnabled = it }
+                    )
+                    Text(
+                        text = "Reorder athletes worst to best",
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    measurementManager.setSelectedAthleteCount(selectedAthleteCount)
+                    measurementManager.setReorderEnabled(reorderEnabled)
+                    measurementManager.calculateAndSetAthleteCut() // Calculate using selected count
+                    measurementManager.showAthleteCutPopup(false)
+                    measurementManager.showProgressionConfirmationPopup(true)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1976D2)
+                )
+            ) {
+                Text(
+                    text = "Continue",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = {
+                    measurementManager.showAthleteCutPopup(false)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFE0E0E0),
+                    contentColor = Color(0xFF333333)
+                )
+            ) {
+                Text(
+                    text = "Cancel",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
+}
+
+@Composable
+fun AthleteProgressionDialog(
+    measurementManager: CompetitionMeasurementManager
+) {
+    val competitionState by measurementManager.competitionState.collectAsState()
+    val athleteCutState = competitionState.athleteCutState
+    AlertDialog(
+        onDismissRequest = {
+            measurementManager.showProgressionConfirmationPopup(false)
+        },
+        title = {
+            Text(
+                text = "Athlete Progression Confirmation",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "The following athletes will advance to the next round:",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // Advancing athletes list (placeholder - will be populated with actual data)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFE8F5E8)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "✅ ADVANCING:",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2E7D32)
+                        )
+                        // Display actual advancing athletes
+                        if (athleteCutState.advancingAthletes.isNotEmpty()) {
+                            athleteCutState.advancingAthletes.forEach { ranking ->
+                                Text(
+                                    text = "${ranking.position}. ${ranking.athlete.name} (${String.format("%.2fm", ranking.bestMark)})",
+                                    fontSize = 16.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "${athleteCutState.selectedAthleteCount} athletes will advance",
+                                fontSize = 16.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Eliminated athletes list (placeholder - will be populated with actual data)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFFFEBEE)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "❌ ELIMINATED:",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFD32F2F)
+                        )
+                        // Display actual eliminated athletes
+                        if (athleteCutState.eliminatedAthletes.isNotEmpty()) {
+                            athleteCutState.eliminatedAthletes.forEach { ranking ->
+                                Text(
+                                    text = "${ranking.position}. ${ranking.athlete.name} (${String.format("%.2fm", ranking.bestMark)})",
+                                    fontSize = 16.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Remaining athletes will be eliminated",
+                                fontSize = 16.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    measurementManager.applyAthleteCutAndAdvance()
+                    measurementManager.showProgressionConfirmationPopup(false)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1976D2)
+                )
+            ) {
+                Text(
+                    text = "Confirm & Advance",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = {
+                    measurementManager.showProgressionConfirmationPopup(false)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFE0E0E0),
+                    contentColor = Color(0xFF333333)
+                )
+            ) {
+                Text(
+                    text = "Cancel",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
+}
+
+@Composable
+fun ReorderConfirmationDialog(
+    currentRound: Int,
+    measurementManager: CompetitionMeasurementManager
+) {
+    val competitionState by measurementManager.competitionState.collectAsState()
+
+    // Get the default reorder setting from Round 3 if available
+    val defaultReorderEnabled = competitionState.finalRoundSettings?.reorderEnabled ?: false
+    var reorderEnabled by remember { mutableStateOf(defaultReorderEnabled) }
+
+    AlertDialog(
+        onDismissRequest = { },
+        title = {
+            Column {
+                Text(
+                    text = "Round $currentRound Complete",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF333333)
+                )
+                Text(
+                    text = "Ready to advance to Round ${currentRound + 1}",
+                    fontSize = 18.sp,
+                    color = Color(0xFF666666)
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Round Transition Options:",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF333333),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // Reorder option only
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { reorderEnabled = !reorderEnabled }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = reorderEnabled,
+                        onCheckedChange = { reorderEnabled = it }
+                    )
+
+                    Column(
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text(
+                            text = "Reorder Athletes (Worst to Best)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF333333)
+                        )
+                        Text(
+                            text = "Change throwing order for Round ${currentRound + 1}",
+                            fontSize = 14.sp,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    // Apply reorder setting and advance to next round
+                    if (reorderEnabled) {
+                        measurementManager.applyAthleteReorder()
+                    }
+                    measurementManager.showReorderConfirmationPopup(false)
+                    measurementManager.advanceToNextRound()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1976D2)
+                )
+            ) {
+                Text(
+                    text = "Continue to Round ${currentRound + 1}",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = {
+                    measurementManager.showReorderConfirmationPopup(false)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFE0E0E0),
+                    contentColor = Color(0xFF333333)
+                )
+            ) {
+                Text(
+                    text = "Cancel",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
 }
 
 /**

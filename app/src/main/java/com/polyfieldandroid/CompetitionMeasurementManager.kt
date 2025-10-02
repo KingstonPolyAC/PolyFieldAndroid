@@ -807,6 +807,138 @@ class CompetitionMeasurementManager(
 
     // Public access to competition state for reactive UI
     val competitionState get() = competitionManager.competitionState
+
+    // Delegate methods for athlete cut functionality
+
+    /**
+     * Show athlete cut popup (delegate to competition manager)
+     */
+    fun showAthleteCutPopup(show: Boolean) {
+        competitionManager.showAthleteCutPopup(show)
+        Log.d(TAG, "Athlete cut popup: $show")
+    }
+
+    /**
+     * Show progression confirmation popup (delegate to competition manager)
+     */
+    fun showProgressionConfirmationPopup(show: Boolean) {
+        competitionManager.showProgressionConfirmationPopup(show)
+        Log.d(TAG, "Progression confirmation popup: $show")
+    }
+
+    /**
+     * Show reorder confirmation popup (Round 4-5, 5-6 transitions)
+     */
+    fun showReorderConfirmationPopup(show: Boolean) {
+        competitionManager.showReorderConfirmationPopup(show)
+        Log.d(TAG, "Reorder confirmation popup: $show")
+    }
+
+    /**
+     * Set selected athlete count for cut (delegate to competition manager)
+     */
+    fun setSelectedAthleteCount(count: Int) {
+        competitionManager.setSelectedAthleteCount(count)
+        Log.d(TAG, "Selected athlete count: $count")
+    }
+
+    /**
+     * Set reorder enabled (delegate to competition manager)
+     */
+    fun setReorderEnabled(enabled: Boolean) {
+        competitionManager.setReorderEnabled(enabled)
+        Log.d(TAG, "Reorder enabled: $enabled")
+    }
+
+    /**
+     * Calculate athlete rankings (simplified for now)
+     */
+    fun calculateAthleteRankings(): List<Any> {
+        // TODO: Implement proper athlete rankings calculation
+        return emptyList()
+    }
+
+    /**
+     * Apply athlete cut (placeholder)
+     */
+    fun applyAthleteCut() {
+        // TODO: Implement athlete cut logic
+        Log.d(TAG, "Applied athlete cut")
+    }
+
+    /**
+     * Calculate and set athlete cut using selected count (delegate to competition manager)
+     */
+    fun calculateAndSetAthleteCut() {
+        competitionManager.calculateAndSetAthleteCut(this) // Pass this manager for access to real athlete data
+        Log.d(TAG, "Calculate and set athlete cut")
+    }
+
+    /**
+     * Get real athlete rankings from athlete manager for competition popups
+     */
+    fun getRealAthleteRankings(): List<AthleteRanking> {
+        return try {
+            val selectedAthletes = athleteManager.getSelectedAthletes()
+            val athleteState = athleteManager.athleteState.value
+            val checkedInBibs = athleteState.checkedInAthletes
+
+            if (selectedAthletes.isEmpty()) {
+                Log.d(TAG, "No selected athletes for rankings")
+                return emptyList()
+            }
+
+            // Filter to only checked-in athletes with valid measurements
+            val checkedInAthletes = selectedAthletes.filter { athlete ->
+                checkedInBibs.contains(athlete.bib) && athlete.getBestMark() != null
+            }
+
+            if (checkedInAthletes.isEmpty()) {
+                Log.d(TAG, "No checked-in athletes with valid marks for rankings")
+                return emptyList()
+            }
+
+            // Create rankings using real athlete data, similar to VisualizationManager logic
+            val rankings = checkedInAthletes
+                .sortedByDescending { it.getBestMark() ?: 0.0 }
+                .mapIndexed { index, athlete ->
+                    AthleteRanking(
+                        position = index + 1,
+                        athlete = athlete,
+                        bestMark = athlete.getBestMark(),
+                        isAdvancing = true, // Will be set properly during cut calculation
+                        recentChange = 0
+                    )
+                }
+
+            Log.d(TAG, "Generated ${rankings.size} real athlete rankings from checked-in athletes with valid marks")
+            rankings
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting real athlete rankings: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Apply athlete reorder (placeholder)
+     */
+    fun applyAthleteReorder() {
+        // TODO: Implement athlete reorder logic
+        Log.d(TAG, "Applied athlete reorder")
+    }
+
+    /**
+     * Reset athlete cut state (placeholder)
+     */
+    fun resetAthleteCutState() {
+        // TODO: Implement reset athlete cut state
+        Log.d(TAG, "Reset athlete cut state")
+    }
+
+    fun applyAthleteCutAndAdvance() {
+        competitionManager.applyAthleteCutAndAdvance()
+        Log.d(TAG, "Apply athlete cut and advance")
+    }
 }
 
 /**
