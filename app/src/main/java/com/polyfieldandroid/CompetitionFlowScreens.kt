@@ -3105,55 +3105,73 @@ fun EnhancedAthleteMeasurementScreen(
                 .fillMaxSize()
                 .padding(8.dp)
         ) {
-            AthleteInfoCard(
-                athlete = currentAthlete,
-                position = currentPosition,
-                bestMark = bestMark,
-                currentRound = currentRound,
-                attemptNumber = attemptNumber,
-                screenWidth = screenWidth
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 200.dp) // Constrain athlete info height
+            ) {
+                AthleteInfoCard(
+                    athlete = currentAthlete,
+                    position = currentPosition,
+                    bestMark = bestMark,
+                    currentRound = currentRound,
+                    attemptNumber = attemptNumber,
+                    screenWidth = screenWidth
+                )
+            }
 
             
             Spacer(modifier = Modifier.height(16.dp))
-            
-            EnhancedMeasurementInterface(
-                measurement = athleteSpecificMeasurement,
-                isLoading = measurementManager.isLoading,
-                onMeasure = {
-                    android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
-                    scope.launch {
-                        android.util.Log.d("MeasurementCallbacks", "Starting measureThrowForAthlete coroutine (portrait)...")
-                        val result = measurementManager.measureThrowForAthlete(currentAthlete)
-                        android.util.Log.d("MeasurementCallbacks", "measureThrowForAthlete result (portrait): $result")
-                    }
-                },
-                onFoul = {
-                    android.util.Log.d("MeasurementCallbacks", "FOUL CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
-                    measurementManager.recordFoul(currentAthlete.bib, currentRound, attemptNumber)
-                    android.util.Log.d("MeasurementCallbacks", "recordFoul completed (portrait)")
-                },
-                onPass = {
-                    android.util.Log.d("MeasurementCallbacks", "PASS CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
-                    measurementManager.recordPass(currentAthlete.bib, currentRound, attemptNumber)
-                    android.util.Log.d("MeasurementCallbacks", "recordPass completed (portrait)")
-                },
-                screenWidth = screenWidth
-            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp) // Constrain measurement interface height to show all buttons
+            ) {
+                EnhancedMeasurementInterface(
+                    measurement = athleteSpecificMeasurement,
+                    isLoading = measurementManager.isLoading,
+                    onMeasure = {
+                        android.util.Log.d("MeasurementCallbacks", "MEASURE CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                        scope.launch {
+                            android.util.Log.d("MeasurementCallbacks", "Starting measureThrowForAthlete coroutine (portrait)...")
+                            val result = measurementManager.measureThrowForAthlete(currentAthlete)
+                            android.util.Log.d("MeasurementCallbacks", "measureThrowForAthlete result (portrait): $result")
+                        }
+                    },
+                    onFoul = {
+                        android.util.Log.d("MeasurementCallbacks", "FOUL CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                        measurementManager.recordFoul(currentAthlete.bib, currentRound, attemptNumber)
+                        android.util.Log.d("MeasurementCallbacks", "recordFoul completed (portrait)")
+                    },
+                    onPass = {
+                        android.util.Log.d("MeasurementCallbacks", "PASS CALLBACK (portrait): athlete=${currentAthlete.bib}, round=$currentRound, attempt=$attemptNumber")
+                        measurementManager.recordPass(currentAthlete.bib, currentRound, attemptNumber)
+                        android.util.Log.d("MeasurementCallbacks", "recordPass completed (portrait)")
+                    },
+                    screenWidth = screenWidth
+                )
+            }
             
             Spacer(modifier = Modifier.height(16.dp))
-            
-            AthleteHistoryCard(
-                competitionAthlete = competitionAthlete,
-                currentRound = currentRound,
-                onEditMeasurement = { round, measurement ->
-                    measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
-                },
-                onRoundSelected = { round ->
-                    android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement (portrait)")
-                    measurementManager.setCurrentRound(round)
-                }
-            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 250.dp) // Constrain athlete history height
+            ) {
+                AthleteHistoryCard(
+                    competitionAthlete = competitionAthlete,
+                    currentRound = currentRound,
+                    onEditMeasurement = { round, measurement ->
+                        measurementManager.editMeasurement(currentAthlete.bib, round, measurement)
+                    },
+                    onRoundSelected = { round ->
+                        android.util.Log.d("CompetitionFlow", "Selected round $round for direct measurement (portrait)")
+                        measurementManager.setCurrentRound(round)
+                    }
+                )
+            }
         }
     }
 }
