@@ -1,5 +1,6 @@
 package com.polyfieldandroid
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,7 +23,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -513,6 +516,8 @@ fun CompetitionResultsScreen(
     selectedEvent: PolyFieldApiClient.Event,
     athleteManager: AthleteManagerViewModel,
     onBackToCompetition: () -> Unit,
+    onViewAthleteHeatmap: (String) -> Unit = {},
+    onViewOverallHeatmap: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val athleteState by athleteManager.athleteState.collectAsState()
@@ -550,14 +555,40 @@ fun CompetitionResultsScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Header
-        Text(
-            text = "${translateEventName(selectedEvent.name)} - Results & Standings",
-            fontSize = maxOf(20f, screenWidth * 0.025f).sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1976D2),
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        // Header with heatmap button
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${translateEventName(selectedEvent.name)} - Results & Standings",
+                fontSize = maxOf(20f, screenWidth * 0.025f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2)
+            )
+
+            // Overall heatmap button (only show if there are results)
+            if (athletesWithResults.isNotEmpty()) {
+                Button(
+                    onClick = onViewOverallHeatmap,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF9800)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = android.R.drawable.ic_dialog_map),
+                        contentDescription = "Overall Heatmap",
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Overall Heatmap", fontSize = 14.sp)
+                }
+            }
+        }
         
         // Summary stats
         Card(
@@ -678,13 +709,14 @@ fun CompetitionResultsScreen(
                     } else {
                         null // N/A for athletes without results
                     }
-                    
+
                     ResultsListItem(
                         position = position,
                         athlete = athlete,
                         results = results,
                         screenWidth = screenWidth,
-                        isCompact = isLandscape
+                        isCompact = isLandscape,
+                        onViewHeatmap = { onViewAthleteHeatmap(athlete.bib) }
                     )
                 }
             }
@@ -698,7 +730,8 @@ fun ResultsListItem(
     athlete: PolyFieldApiClient.Athlete,
     results: CompetitionAthlete?,
     screenWidth: Int,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    onViewHeatmap: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -810,6 +843,22 @@ fun ResultsListItem(
                         fontSize = if (isCompact) 12.sp else 14.sp,
                         color = Color(0xFF999999),
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                }
+            }
+
+            // Heatmap button (only show if athlete has results with coordinates)
+            if (results != null && results.heatmapData.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(12.dp))
+                IconButton(
+                    onClick = onViewHeatmap,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = android.R.drawable.ic_dialog_map),
+                        contentDescription = "View Heatmap",
+                        tint = Color(0xFFFF9800),
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
@@ -3881,6 +3930,537 @@ fun StandingRow(
                 fontSize = 12.sp,
                 color = if (isAdvancing) Color(0xFF4CAF50) else Color(0xFFF44336),
                 fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+/**
+ * Individual Athlete Heatmap Screen
+ * Shows enhanced heatmap visualization for a single athlete
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun IndividualAthleteHeatmapScreen(
+    athleteBib: String,
+    selectedEvent: PolyFieldApiClient.Event,
+    athleteManager: AthleteManagerViewModel,
+    calibration: CalibrationState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val athleteState by athleteManager.athleteState.collectAsState()
+    val athlete = athleteState.athletes.find { it.bib == athleteBib }
+    val serverAthlete = selectedEvent.athletes?.find { it.bib == athleteBib }
+
+    // Filter controls state
+    var selectedRounds by remember { mutableStateOf(setOf(1, 2, 3, 4, 5, 6)) }
+    var showValidOnly by remember { mutableStateOf(false) }
+    var showFoulsOnly by remember { mutableStateOf(false) }
+
+    // Filter throw data
+    val filteredThrows = remember(athlete, selectedRounds, showValidOnly, showFoulsOnly) {
+        athlete?.heatmapData?.filter { throwCoord ->
+            val roundMatch = throwCoord.round in selectedRounds
+            val validityMatch = when {
+                showValidOnly -> throwCoord.isValid
+                showFoulsOnly -> !throwCoord.isValid
+                else -> true
+            }
+            roundMatch && validityMatch
+        } ?: emptyList()
+    }
+
+    // Handle system back button
+    androidx.activity.compose.BackHandler(onBack = onBack)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text("Heatmap: ${serverAthlete?.name ?: athleteBib}")
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF1976D2),
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White
+                )
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            // Statistics card
+            if (athlete != null) {
+                HeatmapStatisticsCard(
+                    throwData = filteredThrows,
+                    athlete = athlete,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
+            // Filter controls
+            HeatmapFilterControls(
+                selectedRounds = selectedRounds,
+                onRoundsChanged = { selectedRounds = it },
+                showValidOnly = showValidOnly,
+                onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                showFoulsOnly = showFoulsOnly,
+                onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // Heatmap visualization
+            if (filteredThrows.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No throws match the current filters",
+                        fontSize = 16.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+            } else {
+                EnhancedHeatmapVisualization(
+                    throwData = filteredThrows,
+                    calibration = calibration,
+                    bestThrow = athlete?.getBestMark(),
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Overall Competition Heatmap Screen
+ * Shows combined heatmap for all athletes
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OverallCompetitionHeatmapScreen(
+    selectedEvent: PolyFieldApiClient.Event,
+    athleteManager: AthleteManagerViewModel,
+    calibration: CalibrationState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val athleteState by athleteManager.athleteState.collectAsState()
+
+    // Filter controls state
+    var selectedRounds by remember { mutableStateOf(setOf(1, 2, 3, 4, 5, 6)) }
+    var showValidOnly by remember { mutableStateOf(false) }
+    var showFoulsOnly by remember { mutableStateOf(false) }
+
+    // Combine all throw data
+    val allThrows = remember(athleteState.athletes, selectedRounds, showValidOnly, showFoulsOnly) {
+        athleteState.athletes.flatMap { athlete ->
+            athlete.heatmapData.filter { throwCoord ->
+                val roundMatch = throwCoord.round in selectedRounds
+                val validityMatch = when {
+                    showValidOnly -> throwCoord.isValid
+                    showFoulsOnly -> !throwCoord.isValid
+                    else -> true
+                }
+                roundMatch && validityMatch
+            }
+        }
+    }
+
+    // Handle system back button
+    androidx.activity.compose.BackHandler(onBack = onBack)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text("Overall Competition Heatmap")
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFFFF9800),
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White
+                )
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            // Overall statistics card
+            OverallStatisticsCard(
+                throwData = allThrows,
+                totalAthletes = athleteState.athletes.count { it.heatmapData.isNotEmpty() },
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // Filter controls
+            HeatmapFilterControls(
+                selectedRounds = selectedRounds,
+                onRoundsChanged = { selectedRounds = it },
+                showValidOnly = showValidOnly,
+                onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                showFoulsOnly = showFoulsOnly,
+                onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // Heatmap visualization
+            if (allThrows.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No throws match the current filters",
+                        fontSize = 16.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+            } else {
+                EnhancedHeatmapVisualization(
+                    throwData = allThrows,
+                    calibration = calibration,
+                    bestThrow = allThrows.filter { it.isValid }.maxByOrNull { it.distance }?.distance,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Heatmap filter controls component
+ */
+@Composable
+fun HeatmapFilterControls(
+    selectedRounds: Set<Int>,
+    onRoundsChanged: (Set<Int>) -> Unit,
+    showValidOnly: Boolean,
+    onShowValidOnlyChanged: (Boolean) -> Unit,
+    showFoulsOnly: Boolean,
+    onShowFoulsOnlyChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "Filters",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF333333),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            // Round selection
+            Text(
+                text = "Rounds",
+                fontSize = 12.sp,
+                color = Color(0xFF666666),
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                (1..6).forEach { round ->
+                    FilterChip(
+                        selected = round in selectedRounds,
+                        onClick = {
+                            onRoundsChanged(
+                                if (round in selectedRounds) selectedRounds - round
+                                else selectedRounds + round
+                            )
+                        },
+                        label = { Text("R$round", fontSize = 12.sp) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Validity filters
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = showValidOnly,
+                    onClick = { onShowValidOnlyChanged(!showValidOnly) },
+                    label = { Text("Valid Only", fontSize = 12.sp) }
+                )
+                FilterChip(
+                    selected = showFoulsOnly,
+                    onClick = { onShowFoulsOnlyChanged(!showFoulsOnly) },
+                    label = { Text("Fouls Only", fontSize = 12.sp) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Statistics card for individual athlete
+ */
+@Composable
+fun HeatmapStatisticsCard(
+    throwData: List<ThrowCoordinate>,
+    athlete: CompetitionAthlete,
+    modifier: Modifier = Modifier
+) {
+    val validThrows = throwData.filter { it.isValid }
+    val bestThrow = validThrows.maxByOrNull { it.distance }
+    val avgDistance = if (validThrows.isNotEmpty()) validThrows.map { it.distance }.average() else 0.0
+
+    // Calculate 2D spatial consistency (landing area clustering)
+    val consistency = if (validThrows.size > 1) {
+        // Calculate centroid (average x, y position)
+        val centroidX = validThrows.map { it.x }.average()
+        val centroidY = validThrows.map { it.y }.average()
+
+        // Calculate average 2D displacement from centroid
+        val avgDisplacement = validThrows.map { throwCoord ->
+            val dx = throwCoord.x - centroidX
+            val dy = throwCoord.y - centroidY
+            kotlin.math.sqrt(dx * dx + dy * dy)
+        }.average()
+
+        // Convert to consistency score (1m² target = 1m radius)
+        // 0m displacement = 100%, 1m = 50%, 2m+ = 0%
+        val consistencyScore = 100.0 * kotlin.math.exp(-avgDisplacement / 1.0)
+        consistencyScore.coerceIn(0.0, 100.0)
+    } else 100.0
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Statistics",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                HeatmapStatItem("Total", "${throwData.size}")
+                HeatmapStatItem("Valid", "${validThrows.size}")
+                HeatmapStatItem("Fouls", "${throwData.size - validThrows.size}")
+                HeatmapStatItem("Best", if (bestThrow != null) String.format("%.2fm", bestThrow.distance) else "--")
+                HeatmapStatItem("Avg", if (validThrows.isNotEmpty()) String.format("%.2fm", avgDistance) else "--")
+                HeatmapStatItem("Consistency", String.format("%.0f%%", consistency))
+            }
+        }
+    }
+}
+
+/**
+ * Statistics card for overall competition
+ */
+@Composable
+fun OverallStatisticsCard(
+    throwData: List<ThrowCoordinate>,
+    totalAthletes: Int,
+    modifier: Modifier = Modifier
+) {
+    val validThrows = throwData.filter { it.isValid }
+    val bestThrow = validThrows.maxByOrNull { it.distance }
+    val avgDistance = if (validThrows.isNotEmpty()) validThrows.map { it.distance }.average() else 0.0
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Overall Statistics",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFFF9800),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                HeatmapStatItem("Athletes", "$totalAthletes")
+                HeatmapStatItem("Total Throws", "${throwData.size}")
+                HeatmapStatItem("Valid", "${validThrows.size}")
+                HeatmapStatItem("Fouls", "${throwData.size - validThrows.size}")
+                HeatmapStatItem("Best", if (bestThrow != null) String.format("%.2fm", bestThrow.distance) else "--")
+                HeatmapStatItem("Avg", if (validThrows.isNotEmpty()) String.format("%.2fm", avgDistance) else "--")
+            }
+        }
+    }
+}
+
+/**
+ * Small statistic item component for heatmap stats
+ */
+@Composable
+fun HeatmapStatItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF333333)
+        )
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            color = Color(0xFF666666)
+        )
+    }
+}
+
+/**
+ * Enhanced heatmap visualization with distance circles and labels
+ */
+@Composable
+fun EnhancedHeatmapVisualization(
+    throwData: List<ThrowCoordinate>,
+    calibration: CalibrationState,
+    bestThrow: Double?,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val centerX = size.width / 2
+        val centerY = size.height / 2
+        val canvasRadius = minOf(size.width, size.height) / 2 * 0.85f
+
+        // Calculate scale
+        val maxDistance = throwData.maxByOrNull { it.distance }?.distance ?: 100.0
+        val distanceScale = canvasRadius / maxDistance.toFloat()
+
+        // Draw distance circles every 10m
+        val maxCircle = (maxDistance / 10).toInt() * 10 + 10
+        for (dist in 10..maxCircle step 10) {
+            val radius = dist * distanceScale
+            if (radius < canvasRadius) {
+                drawCircle(
+                    color = Color(0xFFE0E0E0),
+                    radius = radius,
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
+        }
+
+        // Draw throwing circle
+        val circleRadius = when (calibration.circleType) {
+            "SHOT", "HAMMER" -> 1.0675f * distanceScale // 2.135m diameter
+            "DISCUS" -> 1.25f * distanceScale // 2.5m diameter
+            "JAVELIN_ARC" -> 4.0f * distanceScale // 8m arc
+            else -> 1.0675f * distanceScale
+        }
+
+        drawCircle(
+            color = Color.Black,
+            radius = circleRadius,
+            center = Offset(centerX, centerY),
+            style = Stroke(width = 2.dp.toPx())
+        )
+
+        // Draw sector lines for throws circles (not javelin)
+        if (calibration.circleType != "JAVELIN_ARC" && calibration.sectorLineCoordinates != null) {
+            // Use actual measured right-hand sector line from calibration
+            val sectorAngle = 34.92 // UKA-compliant sector angle in degrees
+
+            // Get measured right sector line coordinates
+            val rightSectorX = calibration.sectorLineCoordinates.first
+            val rightSectorY = calibration.sectorLineCoordinates.second
+
+            // Calculate angle of right sector line from center
+            val rightAngle = kotlin.math.atan2(rightSectorY, rightSectorX)
+
+            // Calculate left sector line angle (34.92° counterclockwise from right)
+            val leftAngle = rightAngle + Math.toRadians(sectorAngle)
+
+            // Draw right sector line (measured)
+            val rightX = centerX + (canvasRadius * kotlin.math.cos(rightAngle)).toFloat()
+            val rightY = centerY - (canvasRadius * kotlin.math.sin(rightAngle)).toFloat() // Flip Y for screen coords
+
+            drawLine(
+                color = Color(0xFFFF6B6B), // Red for measured right sector line
+                start = Offset(centerX, centerY),
+                end = Offset(rightX, rightY),
+                strokeWidth = 2.dp.toPx()
+            )
+
+            // Draw left sector line (calculated)
+            val leftX = centerX + (canvasRadius * kotlin.math.cos(leftAngle)).toFloat()
+            val leftY = centerY - (canvasRadius * kotlin.math.sin(leftAngle)).toFloat() // Flip Y for screen coords
+
+            drawLine(
+                color = Color.Black, // Black for calculated left sector line
+                start = Offset(centerX, centerY),
+                end = Offset(leftX, leftY),
+                strokeWidth = 2.dp.toPx()
+            )
+        }
+
+        // Draw throw points
+        throwData.forEach { throwCoord ->
+            val x = centerX + (throwCoord.x * distanceScale).toFloat()
+            val y = centerY - (throwCoord.y * distanceScale).toFloat()
+
+            val color = when {
+                !throwCoord.isValid -> Color.Red // Fouls in red
+                bestThrow != null && kotlin.math.abs(throwCoord.distance - bestThrow) < 0.01 -> Color(0xFFFFD700) // Best throw in gold
+                else -> when (throwCoord.round) {
+                    1 -> Color.Blue
+                    2 -> Color.Green
+                    3 -> Color(0xFFFF6B6B)
+                    4 -> Color.Magenta
+                    5 -> Color.Cyan
+                    6 -> Color(0xFFFFD700)
+                    else -> Color.Gray
+                }
+            }
+
+            // Draw best throw with larger circle and border
+            if (bestThrow != null && kotlin.math.abs(throwCoord.distance - bestThrow) < 0.01) {
+                drawCircle(
+                    color = Color.Black,
+                    radius = 12.dp.toPx(),
+                    center = Offset(x, y),
+                    style = Stroke(width = 2.dp.toPx())
+                )
+            }
+
+            drawCircle(
+                color = color,
+                radius = if (throwCoord.isValid) 8.dp.toPx() else 6.dp.toPx(),
+                center = Offset(x, y)
             )
         }
     }

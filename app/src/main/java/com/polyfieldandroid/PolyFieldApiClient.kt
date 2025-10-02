@@ -55,14 +55,25 @@ class PolyFieldApiClient(private val context: Context) {
     data class ResultPayload(
         val eventId: String,
         val athleteBib: String,
-        val series: List<Performance>
+        val series: List<Performance>,
+        val heatmapCoordinates: List<HeatmapCoordinate>? = null
     )
-    
+
     data class Performance(
         val attempt: Int,
         val mark: String,
         val unit: String,
         val wind: String? = null,
+        val valid: Boolean,
+        val coordinates: HeatmapCoordinate? = null
+    )
+
+    data class HeatmapCoordinate(
+        val x: Double,
+        val y: Double,
+        val distance: Double,
+        val round: Int,
+        val attempt: Int,
         val valid: Boolean
     )
     

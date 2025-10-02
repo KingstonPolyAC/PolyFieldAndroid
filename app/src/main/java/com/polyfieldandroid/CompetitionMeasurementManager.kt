@@ -387,14 +387,37 @@ class CompetitionMeasurementManager(
                     mark = measurement.distance?.let { "%.2f".format(it) } ?: if (measurement.isPass) "PASS" else "FOUL",
                     unit = "m",
                     wind = measurement.windSpeed?.let { "%.1f".format(it) },
-                    valid = measurement.isValid
+                    valid = measurement.isValid,
+                    coordinates = measurement.coordinates?.let { coord ->
+                        PolyFieldApiClient.HeatmapCoordinate(
+                            x = coord.x,
+                            y = coord.y,
+                            distance = coord.distance,
+                            round = coord.round,
+                            attempt = coord.attemptNumber,
+                            valid = coord.isValid
+                        )
+                    }
                 )
             }
-            
+
+            // Build complete heatmap coordinates list for the athlete
+            val heatmapCoordinates = athlete.heatmapData.map { coord ->
+                PolyFieldApiClient.HeatmapCoordinate(
+                    x = coord.x,
+                    y = coord.y,
+                    distance = coord.distance,
+                    round = coord.round,
+                    attempt = coord.attemptNumber,
+                    valid = coord.isValid
+                )
+            }
+
             val payload = PolyFieldApiClient.ResultPayload(
                 eventId = event.id,
                 athleteBib = result.athleteBib,
-                series = series
+                series = series,
+                heatmapCoordinates = heatmapCoordinates
             )
             
             val success = modeManager.submitResult(payload)

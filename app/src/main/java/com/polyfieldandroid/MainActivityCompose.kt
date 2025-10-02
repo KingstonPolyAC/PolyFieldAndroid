@@ -725,6 +725,7 @@ data class AppState(
     val errorMessage: String? = null,
     val errorTitle: String? = null,
     val settings: AppSettings = AppSettings(),
+    val selectedAthleteBib: String? = null,
     // DEBUG: Serial Communication Log (REMOVE WHEN DEBUG COMPLETE)
     val serialCommLog: List<SerialCommLogEntry> = emptyList(),
     val debugCommStreamVisible: Boolean = false
@@ -903,16 +904,20 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
     
     fun updateScreen(screen: String) {
         _uiState.value = _uiState.value.copy(currentScreen = screen)
-        
+
         // Automatically refresh devices when navigating to device setup in live mode
         if (screen == "DEVICE_SETUP" && !_uiState.value.isDemoMode) {
             android.util.Log.d("PolyField", "Auto-refreshing devices on DEVICE_SETUP navigation")
             refreshUsbDevices()
         }
     }
-    
+
     fun updateEventType(eventType: String) {
         _uiState.value = _uiState.value.copy(eventType = eventType)
+    }
+
+    fun setSelectedAthleteBib(athleteBib: String) {
+        _uiState.value = _uiState.value.copy(selectedAthleteBib = athleteBib)
     }
     
     fun updateCircleType(circleType: String) {
@@ -3070,14 +3075,22 @@ fun PolyFieldApp(
                                 viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
                             },
                             onStartCompetition = {
-                                // Start competition with all checked-in athletes
-                                measurementManager.startCompetition()
-                                // Activate competition when navigating to measurement screen
-                                competitionManager.startCompetition(
-                                    selectedEvent = selectedEvent,
-                                    totalAthletes = athleteManager.getTotalAthletes()
-                                )
-                                viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
+                                // Check if competition is already active
+                                val competitionState = competitionManager.competitionState.value
+                                if (competitionState.isActive) {
+                                    // Competition already running - just navigate to measurement screen
+                                    // This preserves current athlete index and round
+                                    viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
+                                } else {
+                                    // Start new competition with all checked-in athletes
+                                    measurementManager.startCompetition()
+                                    // Activate competition when navigating to measurement screen
+                                    competitionManager.startCompetition(
+                                        selectedEvent = selectedEvent,
+                                        totalAthletes = athleteManager.getTotalAthletes()
+                                    )
+                                    viewModel.updateScreen("COMPETITION_MEASUREMENT_CONNECTED")
+                                }
                             }
                         )
                     } ?: run {
@@ -3124,11 +3137,43 @@ fun PolyFieldApp(
                             athleteManager = athleteManager,
                             onBackToCompetition = {
                                 viewModel.updateScreen("COMPETITION_ACTIVE_CONNECTED")
+                            },
+                            onViewAthleteHeatmap = { athleteBib ->
+                                viewModel.setSelectedAthleteBib(athleteBib)
+                                viewModel.updateScreen("ATHLETE_HEATMAP")
+                            },
+                            onViewOverallHeatmap = {
+                                viewModel.updateScreen("OVERALL_HEATMAP")
                             }
                         )
                     } ?: run {
                         // Fallback if no event selected
                         viewModel.updateScreen("EVENT_SELECTION_CONNECTED")
+                    }
+                }
+                "ATHLETE_HEATMAP" -> {
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        IndividualAthleteHeatmapScreen(
+                            athleteBib = uiState.selectedAthleteBib ?: "",
+                            selectedEvent = selectedEvent,
+                            athleteManager = athleteManager,
+                            calibration = uiState.calibration,
+                            onBack = {
+                                viewModel.updateScreen("COMPETITION_RESULTS_CONNECTED")
+                            }
+                        )
+                    }
+                }
+                "OVERALL_HEATMAP" -> {
+                    competitionManager.competitionState.collectAsState().value.selectedEvent?.let { selectedEvent ->
+                        OverallCompetitionHeatmapScreen(
+                            selectedEvent = selectedEvent,
+                            athleteManager = athleteManager,
+                            calibration = uiState.calibration,
+                            onBack = {
+                                viewModel.updateScreen("COMPETITION_RESULTS_CONNECTED")
+                            }
+                        )
                     }
                 }
                 "DEVICE_SETUP" -> DeviceSetupScreenExact(
@@ -3567,6 +3612,8 @@ private fun navigateBack(viewModel: AppViewModel, uiState: AppState) {
         }
         "COMPETITION_MEASUREMENT_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
         "COMPETITION_RESULTS_CONNECTED" -> "COMPETITION_ACTIVE_CONNECTED"
+        "ATHLETE_HEATMAP" -> "COMPETITION_RESULTS_CONNECTED"
+        "OVERALL_HEATMAP" -> "COMPETITION_RESULTS_CONNECTED"
         "CALIBRATION_SELECT_CIRCLE" -> "DEVICE_SETUP"
         "CALIBRATION_SET_CENTRE" -> "CALIBRATION_SELECT_CIRCLE"
         "CALIBRATION_VERIFY_EDGE" -> "CALIBRATION_SET_CENTRE"
