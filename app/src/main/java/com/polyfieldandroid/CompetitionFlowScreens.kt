@@ -825,6 +825,8 @@ fun ResultsListItem(
                 horizontalAlignment = Alignment.End
             ) {
                 val bestMark = results?.getBestMark()
+                // Count ALL attempts including X and P
+                val totalAttempts = results?.attempts?.size ?: 0
                 if (bestMark != null) {
                     Text(
                         text = String.format("%.2fm", bestMark),
@@ -833,17 +835,26 @@ fun ResultsListItem(
                         color = Color(0xFF1976D2)
                     )
                     Text(
-                        text = "${results.getValidMeasurements().size} measurements",
+                        text = "$totalAttempts attempt${if (totalAttempts != 1) "s" else ""}",
                         fontSize = if (isCompact) 10.sp else 11.sp,
                         color = Color(0xFF666666)
                     )
                 } else {
-                    Text(
-                        text = "No results",
-                        fontSize = if (isCompact) 12.sp else 14.sp,
-                        color = Color(0xFF999999),
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                    )
+                    if (totalAttempts > 0) {
+                        Text(
+                            text = "$totalAttempts attempt${if (totalAttempts != 1) "s" else ""} (no valid marks)",
+                            fontSize = if (isCompact) 12.sp else 14.sp,
+                            color = Color(0xFF999999),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    } else {
+                        Text(
+                            text = "No results",
+                            fontSize = if (isCompact) 12.sp else 14.sp,
+                            color = Color(0xFF999999),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
                 }
             }
 
@@ -4150,6 +4161,7 @@ fun OverallCompetitionHeatmapScreen(
 
 /**
  * Heatmap filter controls component
+ * Note: Fouls/Passes don't have coordinates, so only valid throws appear on heatmap
  */
 @Composable
 fun HeatmapFilterControls(
@@ -4199,24 +4211,7 @@ fun HeatmapFilterControls(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Validity filters
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = showValidOnly,
-                    onClick = { onShowValidOnlyChanged(!showValidOnly) },
-                    label = { Text("Valid Only", fontSize = 12.sp) }
-                )
-                FilterChip(
-                    selected = showFoulsOnly,
-                    onClick = { onShowFoulsOnlyChanged(!showFoulsOnly) },
-                    label = { Text("Fouls Only", fontSize = 12.sp) }
-                )
-            }
+            // Note: Removed "Fouls Only" filter since fouls/passes don't have coordinates to plot
         }
     }
 }

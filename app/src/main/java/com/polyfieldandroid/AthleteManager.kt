@@ -285,10 +285,11 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
                     updatedMeasurements.add(measurement)
                 }
                 
-                // Update heatmap data - remove old coordinates for this round first
+                // Update heatmap data - remove old coordinates for this round/attempt first
                 val updatedHeatmapData = athlete.heatmapData.toMutableList()
-                updatedHeatmapData.removeAll { it.round == round }
-                if (coordinates != null && isValid) {
+                updatedHeatmapData.removeAll { it.round == round && it.attemptNumber == attemptNumber }
+                // Add coordinates for ALL attempts (including fouls and passes)
+                if (coordinates != null) {
                     updatedHeatmapData.add(coordinates)
                 }
                 

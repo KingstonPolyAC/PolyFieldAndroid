@@ -16,6 +16,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -750,18 +751,16 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
     
     init {
         if (fastInit) {
-            // Fast initialization - only essential components
-            android.util.Log.d("PolyField", "AppViewModel fast initialization - heavy components deferred")
-            
-            // Load only critical settings immediately (blocking)
-            loadCriticalSettingsFromDisk()
-            
-            // Defer heavy operations to background
-            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                // Load remaining settings and calibration history
+            // Fast initialization - ZERO blocking operations
+            android.util.Log.d("PolyField", "AppViewModel fast initialization - all I/O deferred to background")
+
+            // ALL disk I/O moved to background thread (IO dispatcher)
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                // Load settings and calibration history asynchronously
+                loadCriticalSettingsFromDisk()
                 loadRemainingSettingsFromDisk()
                 loadCalibrationHistoryFromDisk()
-                
+
                 // Heavy modules initialized only when accessed
             }
         } else {
@@ -770,17 +769,17 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
                 // Initialize heavy modules first
                 edmInterface = EDMInterface(appContext)
                 edmModule = EDMModule(appContext)
-                
-                // Load settings 
+
+                // Load settings
                 loadSettingsFromDisk()
-                
+
                 // Then load calibration history
                 loadCalibrationHistoryFromDisk()
-                
+
                 // Setup debug logger after startup
                 setupDebugLogger()
             }
-            
+
             android.util.Log.d("PolyField", "AppViewModel initialized - Settings will load asynchronously")
         }
     }
@@ -2340,12 +2339,19 @@ class MainActivityCompose : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install Splash Screen API - shows logo INSTANTLY (0ms delay)
+        val splashScreen = installSplashScreen()
+
         super.onCreate(savedInstanceState)
-        
-        // Show splash screen IMMEDIATELY with zero initialization
+
+        // Keep splash visible while app initializes
+        var isReady = false
+        splashScreen.setKeepOnScreenCondition { !isReady }
+
+        // Show app content IMMEDIATELY with zero initialization
         setContent {
             PolyFieldTheme {
-                ZeroDelayApp()
+                ZeroDelayApp(onReady = { isReady = true })
             }
         }
     }
@@ -2576,28 +2582,28 @@ fun PolyFieldTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun ZeroDelayApp() {
+fun ZeroDelayApp(onReady: () -> Unit = {}) {
     val context = LocalContext.current as MainActivityCompose
     var showSplash by remember { mutableStateOf(true) }
-    
+
     // Progressive initialization state
     var appViewModel by remember { mutableStateOf<AppViewModel?>(null) }
     var modeManager by remember { mutableStateOf<ModeManagerViewModel?>(null) }
     var competitionManager by remember { mutableStateOf<CompetitionManagerViewModel?>(null) }
     var athleteManager by remember { mutableStateOf<AthleteManagerViewModel?>(null) }
     var measurementManager by remember { mutableStateOf<CompetitionMeasurementManager?>(null) }
-    
+
     // Show splash for minimum 200ms, then start progressive loading
     LaunchedEffect(Unit) {
         // Minimum splash duration for smooth UX
         kotlinx.coroutines.delay(200)
         showSplash = false
-        
+
         // Start progressive background initialization
         launch(kotlinx.coroutines.Dispatchers.Default) {
             // Phase 1: Critical ViewModels first (lightweight initialization)
             appViewModel = AppViewModel(context, fastInit = true)
-            
+
             // Phase 2: Secondary ViewModels
             launch {
                 competitionManager = ViewModelProvider(context, CompetitionManagerViewModelFactory(context))
@@ -2607,18 +2613,21 @@ fun ZeroDelayApp() {
                 athleteManager = ViewModelProvider(context, AthleteManagerViewModelFactory(context))
                     .get(AthleteManagerViewModel::class.java)
             }
-            
+
             // Phase 3: Mode manager depends on app view model
             appViewModel?.let { appVM ->
                 modeManager = ViewModelProvider(context, ModeManagerViewModelFactory(context, appVM))
                     .get(ModeManagerViewModel::class.java)
             }
-            
-            // Phase 4: Heavy operations last (deferred until needed)
+
+            // Phase 4: Signal ready when critical components loaded
+            onReady()
+
+            // Phase 5: Heavy operations last (deferred until needed)
             // EDM Module and measurement manager created lazily when first accessed
         }
     }
-    
+
     if (showSplash) {
         SplashScreen()
     } else {
