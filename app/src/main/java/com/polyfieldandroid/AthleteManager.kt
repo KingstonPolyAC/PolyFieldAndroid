@@ -477,8 +477,14 @@ class AthleteManagerViewModel(private val context: Context) : ViewModel() {
      * Get athletes ranked by performance
      */
     fun getAthletesByRanking(): List<Pair<CompetitionAthlete, Int>> {
-        return _athleteState.value.selectedAthletes
-            .sortedByDescending { it.getBestMark() ?: 0.0 }
+        val currentState = _athleteState.value
+        val checkedInAthletes = currentState.athletes.filter { it.bib in currentState.checkedInAthletes }
+
+        // Sort: athletes with marks first (by descending distance), then athletes without marks (by bib order)
+        return checkedInAthletes
+            .sortedWith(compareByDescending<CompetitionAthlete> { it.getBestMark() != null }
+                .thenByDescending { it.getBestMark() ?: 0.0 }
+                .thenBy { it.bib })
             .mapIndexed { index, athlete -> athlete to (index + 1) }
     }
     

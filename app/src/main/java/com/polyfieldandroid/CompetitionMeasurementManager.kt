@@ -358,8 +358,17 @@ class CompetitionMeasurementManager(
                 // Submit to server if in connected mode
                 if (modeManager.isConnectedMode() && competitionManager.competitionState.value.selectedEvent != null) {
                     submitResultToServer(result)
+
+                    // Trigger immediate background sync to ensure all results are up-to-date
+                    val serverConfig = modeManager.modeState.value.serverConfig
+                    ResultSyncWorker.scheduleImmediateSync(
+                        context,
+                        serverConfig.ipAddress,
+                        serverConfig.port
+                    )
+                    Log.d(TAG, "Triggered immediate result sync after measurement")
                 }
-                
+
                 Log.d(TAG, "Measurement recorded for athlete ${result.athleteBib}")
                 
             } catch (e: Exception) {
@@ -581,7 +590,21 @@ class CompetitionMeasurementManager(
      * Get ranking for specific athlete
      */
     fun getRankingForAthlete(athleteBib: String): Int {
-        val rankings = athleteManager.getAthletesByRanking()
+        val currentRound = competitionManager.getCurrentRound()
+        val competitionState = competitionManager.competitionState.value
+        val progressingAthletes = competitionState.progressingAthletes
+
+        // Get all ranked athletes
+        val allRankings = athleteManager.getAthletesByRanking()
+
+        // For rounds 4+, filter to only progressing athletes
+        val rankings = if (currentRound >= 4 && progressingAthletes.isNotEmpty()) {
+            allRankings.filter { it.first.bib in progressingAthletes }
+                .mapIndexed { index, pair -> pair.first to (index + 1) }
+        } else {
+            allRankings
+        }
+
         val ranking = rankings.find { it.first.bib == athleteBib }?.second ?: 0
         return ranking
     }
@@ -946,8 +969,9 @@ class CompetitionMeasurementManager(
      * Apply athlete reorder (placeholder)
      */
     fun applyAthleteReorder() {
-        // TODO: Implement athlete reorder logic
-        Log.d(TAG, "Applied athlete reorder")
+        // Reorder athletes by performance (worst to best - WA/UKA rules)
+        athleteManager.reorderAthletesByPerformance(reverseOrder = true)
+        Log.d(TAG, "Applied athlete reorder (worst to best)")
     }
 
     /**
@@ -961,6 +985,96 @@ class CompetitionMeasurementManager(
     fun applyAthleteCutAndAdvance() {
         competitionManager.applyAthleteCutAndAdvance()
         Log.d(TAG, "Apply athlete cut and advance")
+    }
+
+    /**
+     * Sync all current athlete results to the server
+     * This is called periodically in the background to ensure server is up-to-date
+     */
+    suspend fun syncAllResults() {
+        try {
+            val event = competitionManager.competitionState.value.selectedEvent ?: run {
+                Log.w(TAG, "No event selected, cannot sync results")
+                return
+            }
+
+            val athletes = athleteManager.athleteState.value.athletes
+            val checkedInAthletes = athletes.filter { it.bib in athleteManager.athleteState.value.checkedInAthletes }
+
+            if (checkedInAthletes.isEmpty()) {
+                Log.d(TAG, "No checked-in athletes to sync")
+                return
+            }
+
+            var syncedCount = 0
+            var failedCount = 0
+
+            for (athlete in checkedInAthletes) {
+                // Only sync athletes that have measurements
+                if (athlete.attempts.isEmpty()) {
+                    continue
+                }
+
+                try {
+                    // Build series from all attempts
+                    val series = athlete.attempts.map { measurement ->
+                        PolyFieldApiClient.Performance(
+                            attempt = measurement.round,
+                            mark = measurement.distance?.let { String.format("%.2f", it) } ?: "X",
+                            unit = "m",
+                            valid = measurement.isValid,
+                            coordinates = measurement.coordinates?.let { coord ->
+                                PolyFieldApiClient.HeatmapCoordinate(
+                                    x = coord.x,
+                                    y = coord.y,
+                                    distance = coord.distance,
+                                    round = coord.round,
+                                    attempt = coord.attemptNumber,
+                                    valid = coord.isValid
+                                )
+                            }
+                        )
+                    }
+
+                    // Build complete heatmap coordinates
+                    val heatmapCoordinates = athlete.heatmapData.map { coord ->
+                        PolyFieldApiClient.HeatmapCoordinate(
+                            x = coord.x,
+                            y = coord.y,
+                            distance = coord.distance,
+                            round = coord.round,
+                            attempt = coord.attemptNumber,
+                            valid = coord.isValid
+                        )
+                    }
+
+                    val payload = PolyFieldApiClient.ResultPayload(
+                        eventId = event.id,
+                        athleteBib = athlete.bib,
+                        series = series,
+                        heatmapCoordinates = heatmapCoordinates
+                    )
+
+                    val success = modeManager.submitResult(payload)
+                    if (success) {
+                        syncedCount++
+                        Log.d(TAG, "Synced results for athlete ${athlete.bib}")
+                    } else {
+                        failedCount++
+                        Log.w(TAG, "Failed to sync results for athlete ${athlete.bib}")
+                    }
+
+                } catch (e: Exception) {
+                    failedCount++
+                    Log.e(TAG, "Error syncing results for athlete ${athlete.bib}: ${e.message}")
+                }
+            }
+
+            Log.d(TAG, "Background sync complete: $syncedCount succeeded, $failedCount failed")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during background sync: ${e.message}")
+        }
     }
 }
 

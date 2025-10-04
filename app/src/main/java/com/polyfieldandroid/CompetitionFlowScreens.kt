@@ -992,13 +992,34 @@ fun CompetitionMeasurementScreen(
     
     // Get checked-in athletes for competition rotation
     val allAthletes = selectedEvent.athletes ?: emptyList()
-    val checkedInAthletes = allAthletes.filter { athlete ->
-        athleteState.checkedInAthletes.contains(athlete.bib)
-    }
-    
+
     // Competition state - get current round from competition manager reactively
     val competitionState by measurementManager.competitionState.collectAsState()
     val currentRound = competitionState.currentRound
+
+    // Filter athletes based on round - for rounds 4+, only show progressing athletes
+    val filteredAthletes = allAthletes.filter { athlete ->
+        val isCheckedIn = athleteState.checkedInAthletes.contains(athlete.bib)
+        if (currentRound >= 4 && competitionState.progressingAthletes.isNotEmpty()) {
+            // Rounds 4-6: Only show athletes who made the cut
+            isCheckedIn && competitionState.progressingAthletes.contains(athlete.bib)
+        } else {
+            // Rounds 1-3: Show all checked-in athletes
+            isCheckedIn
+        }
+    }
+
+    // Apply reordering for rounds 4-6 if enabled in settings
+    val checkedInAthletes = if (currentRound >= 4 && competitionState.finalRoundSettings?.reorderEnabled == true) {
+        // Reorder worst to best (WA/UKA rules) - athletes with no marks go first
+        filteredAthletes.sortedBy { athlete ->
+            val athleteData = athleteState.athletes.find { it.bib == athlete.bib }
+            athleteData?.getBestMark() ?: -1.0  // No mark = -1.0 sorts first
+        }
+    } else {
+        // Keep original order (by bib number)
+        filteredAthletes.sortedBy { it.order }
+    }
 
     // Local state for managing current athlete within checked-in athletes
     var currentAthleteIndex by remember { mutableStateOf(0) }
@@ -3044,7 +3065,7 @@ fun EnhancedAthleteMeasurementScreen(
     
     // Get athlete data - avoid AthleteManager dependencies to prevent cycling
     val competitionAthlete = athleteState.athletes.find { it.bib == currentAthlete.bib }
-    val currentPosition = 1 // Simplified for now to avoid cycling issues
+    val currentPosition = measurementManager.getRankingForAthlete(currentAthlete.bib)
     val bestMark = competitionAthlete?.getBestMark()
     val hasMeasurementThisRound = competitionAthlete?.getCurrentRoundMeasurements(currentRound)?.isNotEmpty() ?: false
     val attemptNumber = 1 // Always 1 since only one attempt per round
@@ -3963,6 +3984,8 @@ fun IndividualAthleteHeatmapScreen(
     val athleteState by athleteManager.athleteState.collectAsState()
     val athlete = athleteState.athletes.find { it.bib == athleteBib }
     val serverAthlete = selectedEvent.athletes?.find { it.bib == athleteBib }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
 
     // Filter controls state
     var selectedRounds by remember { mutableStateOf(setOf(1, 2, 3, 4, 5, 6)) }
@@ -4004,51 +4027,118 @@ fun IndividualAthleteHeatmapScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-        ) {
-            // Statistics card
-            if (athlete != null) {
-                HeatmapStatisticsCard(
-                    throwData = filteredThrows,
-                    athlete = athlete,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-            }
-
-            // Filter controls
-            HeatmapFilterControls(
-                selectedRounds = selectedRounds,
-                onRoundsChanged = { selectedRounds = it },
-                showValidOnly = showValidOnly,
-                onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
-                showFoulsOnly = showFoulsOnly,
-                onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Heatmap visualization
-            if (filteredThrows.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+        if (isLandscape) {
+            // Landscape: Side-by-side layout with heatmap taking most space
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(8.dp)
+            ) {
+                // Left side: Filters and stats (30%)
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(0.3f)
+                        .padding(end = 8.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    Text(
-                        text = "No throws match the current filters",
-                        fontSize = 16.sp,
-                        color = Color(0xFF666666)
+                    // Statistics card
+                    if (athlete != null) {
+                        HeatmapStatisticsCard(
+                            throwData = filteredThrows,
+                            athlete = athlete,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+
+                    // Filter controls
+                    HeatmapFilterControls(
+                        selectedRounds = selectedRounds,
+                        onRoundsChanged = { selectedRounds = it },
+                        showValidOnly = showValidOnly,
+                        onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                        showFoulsOnly = showFoulsOnly,
+                        onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
-            } else {
-                EnhancedHeatmapVisualization(
-                    throwData = filteredThrows,
-                    calibration = calibration,
-                    bestThrow = athlete?.getBestMark(),
-                    modifier = Modifier.fillMaxSize()
+
+                // Right side: Heatmap visualization (70%)
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(0.7f)
+                ) {
+                    if (filteredThrows.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No throws match the current filters",
+                                fontSize = 16.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                    } else {
+                        EnhancedHeatmapVisualization(
+                            throwData = filteredThrows,
+                            calibration = calibration,
+                            bestThrow = athlete?.getBestMark(),
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
+        } else {
+            // Portrait: Original vertical layout
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Statistics card
+                if (athlete != null) {
+                    HeatmapStatisticsCard(
+                        throwData = filteredThrows,
+                        athlete = athlete,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                }
+
+                // Filter controls
+                HeatmapFilterControls(
+                    selectedRounds = selectedRounds,
+                    onRoundsChanged = { selectedRounds = it },
+                    showValidOnly = showValidOnly,
+                    onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                    showFoulsOnly = showFoulsOnly,
+                    onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                    modifier = Modifier.padding(bottom = 16.dp)
                 )
+
+                // Heatmap visualization
+                if (filteredThrows.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No throws match the current filters",
+                            fontSize = 16.sp,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                } else {
+                    EnhancedHeatmapVisualization(
+                        throwData = filteredThrows,
+                        calibration = calibration,
+                        bestThrow = athlete?.getBestMark(),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -4068,6 +4158,8 @@ fun OverallCompetitionHeatmapScreen(
     modifier: Modifier = Modifier
 ) {
     val athleteState by athleteManager.athleteState.collectAsState()
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
 
     // Filter controls state
     var selectedRounds by remember { mutableStateOf(setOf(1, 2, 3, 4, 5, 6)) }
@@ -4111,49 +4203,114 @@ fun OverallCompetitionHeatmapScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-        ) {
-            // Overall statistics card
-            OverallStatisticsCard(
-                throwData = allThrows,
-                totalAthletes = athleteState.athletes.count { it.heatmapData.isNotEmpty() },
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Filter controls
-            HeatmapFilterControls(
-                selectedRounds = selectedRounds,
-                onRoundsChanged = { selectedRounds = it },
-                showValidOnly = showValidOnly,
-                onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
-                showFoulsOnly = showFoulsOnly,
-                onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Heatmap visualization
-            if (allThrows.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+        if (isLandscape) {
+            // Landscape: Side-by-side layout with heatmap taking most space
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(8.dp)
+            ) {
+                // Left side: Filters and stats (30%)
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(0.3f)
+                        .padding(end = 8.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    Text(
-                        text = "No throws match the current filters",
-                        fontSize = 16.sp,
-                        color = Color(0xFF666666)
+                    // Overall statistics card
+                    OverallStatisticsCard(
+                        throwData = allThrows,
+                        totalAthletes = athleteState.athletes.count { it.heatmapData.isNotEmpty() },
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    // Filter controls
+                    HeatmapFilterControls(
+                        selectedRounds = selectedRounds,
+                        onRoundsChanged = { selectedRounds = it },
+                        showValidOnly = showValidOnly,
+                        onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                        showFoulsOnly = showFoulsOnly,
+                        onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
-            } else {
-                EnhancedHeatmapVisualization(
+
+                // Right side: Heatmap visualization (70%)
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(0.7f)
+                ) {
+                    if (allThrows.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No throws match the current filters",
+                                fontSize = 16.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                    } else {
+                        EnhancedHeatmapVisualization(
+                            throwData = allThrows,
+                            calibration = calibration,
+                            bestThrow = allThrows.filter { it.isValid }.maxByOrNull { it.distance }?.distance,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
+        } else {
+            // Portrait: Original vertical layout
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Overall statistics card
+                OverallStatisticsCard(
                     throwData = allThrows,
-                    calibration = calibration,
-                    bestThrow = allThrows.filter { it.isValid }.maxByOrNull { it.distance }?.distance,
-                    modifier = Modifier.fillMaxSize()
+                    totalAthletes = athleteState.athletes.count { it.heatmapData.isNotEmpty() },
+                    modifier = Modifier.padding(bottom = 16.dp)
                 )
+
+                // Filter controls
+                HeatmapFilterControls(
+                    selectedRounds = selectedRounds,
+                    onRoundsChanged = { selectedRounds = it },
+                    showValidOnly = showValidOnly,
+                    onShowValidOnlyChanged = { showValidOnly = it; if (it) showFoulsOnly = false },
+                    showFoulsOnly = showFoulsOnly,
+                    onShowFoulsOnlyChanged = { showFoulsOnly = it; if (it) showValidOnly = false },
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // Heatmap visualization
+                if (allThrows.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No throws match the current filters",
+                            fontSize = 16.sp,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                } else {
+                    EnhancedHeatmapVisualization(
+                        throwData = allThrows,
+                        calibration = calibration,
+                        bestThrow = allThrows.filter { it.isValid }.maxByOrNull { it.distance }?.distance,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -4348,42 +4505,75 @@ fun EnhancedHeatmapVisualization(
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier) {
-        val centerX = size.width / 2
-        val centerY = size.height / 2
-        val canvasRadius = minOf(size.width, size.height) / 2 * 0.85f
+        // Calculate furthest throw to determine scaling
+        val maxThrowDistance = throwData.maxByOrNull { it.distance }?.distance ?: 50.0
+        val displayMaxDistance = kotlin.math.ceil(maxThrowDistance / 10.0) * 10.0 + 10.0 // Round up to next 10m + 10m margin
 
-        // Calculate scale
-        val maxDistance = throwData.maxByOrNull { it.distance }?.distance ?: 100.0
-        val distanceScale = canvasRadius / maxDistance.toFloat()
+        // Use vertical space more efficiently - center circle 1/3 from bottom
+        val availableWidth = size.width
+        val availableHeight = size.height
+        val scale = minOf(availableWidth, availableHeight * 1.5f) / (displayMaxDistance.toFloat() * 2.2f)
+
+        // Position circle center 1/3 up from bottom to show throws better
+        val centerX = size.width / 2f
+        val centerY = size.height * 0.7f
 
         // Draw distance circles every 10m
-        val maxCircle = (maxDistance / 10).toInt() * 10 + 10
-        for (dist in 10..maxCircle step 10) {
-            val radius = dist * distanceScale
-            if (radius < canvasRadius) {
-                drawCircle(
-                    color = Color(0xFFE0E0E0),
-                    radius = radius,
-                    center = Offset(centerX, centerY),
-                    style = Stroke(width = 1.dp.toPx())
-                )
-            }
+        for (dist in 10..(displayMaxDistance.toInt()) step 10) {
+            val radius = dist * scale
+            drawCircle(
+                color = Color(0xFFE0E0E0),
+                radius = radius,
+                center = Offset(centerX, centerY),
+                style = Stroke(width = 1.5.dp.toPx())
+            )
+
+            // TODO: Add distance labels using drawIntoCanvas
         }
 
         // Draw throwing circle
         val circleRadius = when (calibration.circleType) {
-            "SHOT", "HAMMER" -> 1.0675f * distanceScale // 2.135m diameter
-            "DISCUS" -> 1.25f * distanceScale // 2.5m diameter
-            "JAVELIN_ARC" -> 4.0f * distanceScale // 8m arc
-            else -> 1.0675f * distanceScale
+            "SHOT", "HAMMER" -> 1.0675f * scale // 2.135m diameter
+            "DISCUS" -> 1.25f * scale // 2.5m diameter
+            "JAVELIN_ARC" -> 4.0f * scale // 8m arc
+            else -> 1.0675f * scale
         }
 
         drawCircle(
             color = Color.Black,
             radius = circleRadius,
             center = Offset(centerX, centerY),
-            style = Stroke(width = 2.dp.toPx())
+            style = Stroke(width = 3.dp.toPx())
         )
+
+        // Draw EDM position (marked with crosshair)
+        if (calibration.stationCoordinates != null) {
+            val edmX = centerX + (calibration.stationCoordinates.first * scale).toFloat()
+            val edmY = centerY - (calibration.stationCoordinates.second * scale).toFloat()
+            val crosshairSize = 15.dp.toPx()
+
+            // Draw crosshair for EDM
+            drawLine(
+                color = Color.Blue,
+                start = Offset(edmX - crosshairSize, edmY),
+                end = Offset(edmX + crosshairSize, edmY),
+                strokeWidth = 3.dp.toPx()
+            )
+            drawLine(
+                color = Color.Blue,
+                start = Offset(edmX, edmY - crosshairSize),
+                end = Offset(edmX, edmY + crosshairSize),
+                strokeWidth = 3.dp.toPx()
+            )
+            drawCircle(
+                color = Color.Blue,
+                radius = 8.dp.toPx(),
+                center = Offset(edmX, edmY),
+                style = Stroke(width = 2.dp.toPx())
+            )
+
+            // TODO: Add EDM label using drawIntoCanvas
+        }
 
         // Draw sector lines for throws circles (not javelin)
         if (calibration.circleType != "JAVELIN_ARC" && calibration.sectorLineCoordinates != null) {
@@ -4400,33 +4590,35 @@ fun EnhancedHeatmapVisualization(
             // Calculate left sector line angle (34.92° counterclockwise from right)
             val leftAngle = rightAngle + Math.toRadians(sectorAngle)
 
+            val sectorLineLength = displayMaxDistance.toFloat() * scale
+
             // Draw right sector line (measured)
-            val rightX = centerX + (canvasRadius * kotlin.math.cos(rightAngle)).toFloat()
-            val rightY = centerY - (canvasRadius * kotlin.math.sin(rightAngle)).toFloat() // Flip Y for screen coords
+            val rightX = centerX + (sectorLineLength * kotlin.math.cos(rightAngle)).toFloat()
+            val rightY = centerY - (sectorLineLength * kotlin.math.sin(rightAngle)).toFloat()
 
             drawLine(
                 color = Color(0xFFFF6B6B), // Red for measured right sector line
                 start = Offset(centerX, centerY),
                 end = Offset(rightX, rightY),
-                strokeWidth = 2.dp.toPx()
+                strokeWidth = 3.dp.toPx()
             )
 
             // Draw left sector line (calculated)
-            val leftX = centerX + (canvasRadius * kotlin.math.cos(leftAngle)).toFloat()
-            val leftY = centerY - (canvasRadius * kotlin.math.sin(leftAngle)).toFloat() // Flip Y for screen coords
+            val leftX = centerX + (sectorLineLength * kotlin.math.cos(leftAngle)).toFloat()
+            val leftY = centerY - (sectorLineLength * kotlin.math.sin(leftAngle)).toFloat()
 
             drawLine(
                 color = Color.Black, // Black for calculated left sector line
                 start = Offset(centerX, centerY),
                 end = Offset(leftX, leftY),
-                strokeWidth = 2.dp.toPx()
+                strokeWidth = 3.dp.toPx()
             )
         }
 
         // Draw throw points
         throwData.forEach { throwCoord ->
-            val x = centerX + (throwCoord.x * distanceScale).toFloat()
-            val y = centerY - (throwCoord.y * distanceScale).toFloat()
+            val x = centerX + (throwCoord.x * scale).toFloat()
+            val y = centerY - (throwCoord.y * scale).toFloat()
 
             val color = when {
                 !throwCoord.isValid -> Color.Red // Fouls in red
@@ -4446,15 +4638,15 @@ fun EnhancedHeatmapVisualization(
             if (bestThrow != null && kotlin.math.abs(throwCoord.distance - bestThrow) < 0.01) {
                 drawCircle(
                     color = Color.Black,
-                    radius = 12.dp.toPx(),
+                    radius = 16.dp.toPx(),
                     center = Offset(x, y),
-                    style = Stroke(width = 2.dp.toPx())
+                    style = Stroke(width = 3.dp.toPx())
                 )
             }
 
             drawCircle(
                 color = color,
-                radius = if (throwCoord.isValid) 8.dp.toPx() else 6.dp.toPx(),
+                radius = if (throwCoord.isValid) 10.dp.toPx() else 8.dp.toPx(),
                 center = Offset(x, y)
             )
         }
