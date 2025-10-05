@@ -2680,7 +2680,14 @@ fun ProgressivePolyFieldApp(
                 val edm = edmModule ?: EDMModule(context).also { edmModule = it }
                 ViewModelProvider(
                     context,
-                    CompetitionMeasurementManagerFactory(context, edm, athleteManager, competitionManager, modeManager)
+                    CompetitionMeasurementManagerFactory(
+                        context,
+                        edm,
+                        athleteManager,
+                        competitionManager,
+                        modeManager,
+                        getCalibrationState = { appViewModel.uiState.value.calibration }
+                    )
                 ).get(CompetitionMeasurementManager::class.java).apply {
                     // Sync initial demo mode state
                     setDemoMode(appViewModel.uiState.value.isDemoMode)

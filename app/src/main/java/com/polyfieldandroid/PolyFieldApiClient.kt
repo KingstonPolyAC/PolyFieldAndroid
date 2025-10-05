@@ -56,7 +56,8 @@ class PolyFieldApiClient(private val context: Context) {
         val eventId: String,
         val athleteBib: String,
         val series: List<Performance>,
-        val heatmapCoordinates: List<HeatmapCoordinate>? = null
+        val heatmapCoordinates: List<HeatmapCoordinate>? = null,
+        val calibrationMetadata: CalibrationMetadata? = null
     )
 
     data class Performance(
@@ -75,6 +76,37 @@ class PolyFieldApiClient(private val context: Context) {
         val round: Int,
         val attempt: Int,
         val valid: Boolean
+    )
+
+    /**
+     * Calibration metadata providing complete spatial context
+     * Allows server to reconstruct exact field geometry and measurement setup
+     */
+    data class CalibrationMetadata(
+        val circleType: String,              // "SHOT", "DISCUS", "HAMMER", "JAVELIN_ARC"
+        val circleRadius: Double,            // Circle radius in meters (e.g., 1.0675 for shot)
+        val edmPosition: Coordinate,         // EDM station position (x, y) relative to circle center
+        val sectorLines: SectorLines? = null, // Sector line positions (null for javelin)
+        val timestamp: String,               // ISO 8601 timestamp of calibration
+        val calibrationId: String? = null    // Unique ID for calibration session
+    )
+
+    /**
+     * 2D coordinate in meters relative to circle center (0, 0)
+     */
+    data class Coordinate(
+        val x: Double,  // East-West axis (meters)
+        val y: Double   // North-South axis (meters)
+    )
+
+    /**
+     * Sector line geometry for throws circles
+     * UKA/WA standard: 34.92° sector angle
+     */
+    data class SectorLines(
+        val rightLine: Coordinate,  // Right sector line endpoint (measured)
+        val leftLine: Coordinate,   // Left sector line endpoint (calculated, 34.92° from right)
+        val sectorAngle: Double = 34.92  // Sector angle in degrees (UKA/WA standard)
     )
     
     /**

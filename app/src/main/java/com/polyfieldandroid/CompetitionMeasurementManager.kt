@@ -62,7 +62,8 @@ class CompetitionMeasurementManager(
     private val edmModule: EDMModule,
     private val athleteManager: AthleteManagerViewModel,
     private val competitionManager: CompetitionManagerViewModel,
-    private val modeManager: ModeManagerViewModel
+    private val modeManager: ModeManagerViewModel,
+    private val getCalibrationState: () -> com.polyfieldandroid.CalibrationState
 ) : ViewModel() {
     
     // Clean EDM Interface for new measurements
@@ -381,6 +382,72 @@ class CompetitionMeasurementManager(
     }
     
     /**
+     * Build calibration metadata from current calibration state
+     */
+    private fun buildCalibrationMetadata(): PolyFieldApiClient.CalibrationMetadata? {
+        try {
+            val calibration = getCalibrationState()
+
+            // Only return metadata if calibration is complete
+            if (!calibration.centreSet || calibration.stationCoordinates == null) {
+                Log.w(TAG, "Calibration incomplete, not including metadata")
+                return null
+            }
+
+            val edmPosition = PolyFieldApiClient.Coordinate(
+                x = calibration.stationCoordinates!!.first,
+                y = calibration.stationCoordinates!!.second
+            )
+
+            // Build sector lines if available (not for javelin)
+            val sectorLines = if (calibration.circleType != "JAVELIN_ARC" &&
+                                  calibration.sectorLineSet &&
+                                  calibration.sectorLineCoordinates != null) {
+
+                val rightLine = PolyFieldApiClient.Coordinate(
+                    x = calibration.sectorLineCoordinates!!.first,
+                    y = calibration.sectorLineCoordinates!!.second
+                )
+
+                // Calculate left sector line (34.92° counterclockwise from right)
+                val rightAngle = kotlin.math.atan2(rightLine.y, rightLine.x)
+                val leftAngle = rightAngle + Math.toRadians(34.92)
+                val distance = kotlin.math.sqrt(rightLine.x * rightLine.x + rightLine.y * rightLine.y)
+
+                val leftLine = PolyFieldApiClient.Coordinate(
+                    x = distance * kotlin.math.cos(leftAngle),
+                    y = distance * kotlin.math.sin(leftAngle)
+                )
+
+                PolyFieldApiClient.SectorLines(
+                    rightLine = rightLine,
+                    leftLine = leftLine,
+                    sectorAngle = 34.92
+                )
+            } else {
+                null
+            }
+
+            // Create unique calibration ID from timestamp
+            val calibrationId = calibration.centreTimestamp?.replace(":", "")?.replace(" ", "-")
+                ?: System.currentTimeMillis().toString()
+
+            return PolyFieldApiClient.CalibrationMetadata(
+                circleType = calibration.circleType,
+                circleRadius = calibration.targetRadius,
+                edmPosition = edmPosition,
+                sectorLines = sectorLines,
+                timestamp = java.time.Instant.now().toString(), // ISO 8601 format
+                calibrationId = calibrationId
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error building calibration metadata: ${e.message}")
+            return null
+        }
+    }
+
+    /**
      * Submit result to server (Connected mode)
      */
     private suspend fun submitResultToServer(result: MeasurementResult) {
@@ -422,11 +489,15 @@ class CompetitionMeasurementManager(
                 )
             }
 
+            // Build calibration metadata to provide complete field geometry
+            val calibrationMetadata = buildCalibrationMetadata()
+
             val payload = PolyFieldApiClient.ResultPayload(
                 eventId = event.id,
                 athleteBib = result.athleteBib,
                 series = series,
-                heatmapCoordinates = heatmapCoordinates
+                heatmapCoordinates = heatmapCoordinates,
+                calibrationMetadata = calibrationMetadata
             )
             
             val success = modeManager.submitResult(payload)
@@ -1048,11 +1119,15 @@ class CompetitionMeasurementManager(
                         )
                     }
 
+                    // Build calibration metadata to provide complete field geometry
+                    val calibrationMetadata = buildCalibrationMetadata()
+
                     val payload = PolyFieldApiClient.ResultPayload(
                         eventId = event.id,
                         athleteBib = athlete.bib,
                         series = series,
-                        heatmapCoordinates = heatmapCoordinates
+                        heatmapCoordinates = heatmapCoordinates,
+                        calibrationMetadata = calibrationMetadata
                     )
 
                     val success = modeManager.submitResult(payload)
@@ -1086,13 +1161,14 @@ class CompetitionMeasurementManagerFactory(
     private val edmModule: EDMModule,
     private val athleteManager: AthleteManagerViewModel,
     private val competitionManager: CompetitionManagerViewModel,
-    private val modeManager: ModeManagerViewModel
+    private val modeManager: ModeManagerViewModel,
+    private val getCalibrationState: () -> com.polyfieldandroid.CalibrationState
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(CompetitionMeasurementManager::class.java)) {
             return CompetitionMeasurementManager(
-                context, edmModule, athleteManager, competitionManager, modeManager
+                context, edmModule, athleteManager, competitionManager, modeManager, getCalibrationState
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
