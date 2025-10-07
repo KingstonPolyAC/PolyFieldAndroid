@@ -115,16 +115,16 @@ fun ThrowsMeasurementInterface(
             ) {
                 Text(
                     text = "Distance:",
-                    fontSize = maxOf(20f, screenWidth * 0.025f).sp,
+                    fontSize = maxOf(18f, screenWidth * 0.022f).sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF666666)
                 )
-                
-                Spacer(modifier = Modifier.height(10.dp))
-                
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 Text(
                     text = measurement.ifEmpty { "--" },
-                    fontSize = maxOf(72f, screenWidth * 0.12f).sp, // Increased from 48sp to 72sp for field visibility
+                    fontSize = maxOf(56f, screenWidth * 0.09f).sp, // Reduced for landscape to prevent overflow
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2),
                     textAlign = TextAlign.Center
@@ -252,15 +252,15 @@ fun SessionStatistics(
             StatItem(
                 label = "Longest",
                 value = if (throwCoordinates.isNotEmpty()) {
-                    String.format(java.util.Locale.UK, "%.1fm", throwCoordinates.maxOf { it.distance })
-                } else "0.0m"
+                    String.format(java.util.Locale.UK, "%.2fm", throwCoordinates.maxOf { it.distance })
+                } else "0.00m"
             )
-            
+
             StatItem(
                 label = "Average",
                 value = if (throwCoordinates.isNotEmpty()) {
-                    String.format(java.util.Locale.UK, "%.1fm", throwCoordinates.map { it.distance }.average())
-                } else "0.0m"
+                    String.format(java.util.Locale.UK, "%.2fm", throwCoordinates.map { it.distance }.average())
+                } else "0.00m"
             )
         }
     }

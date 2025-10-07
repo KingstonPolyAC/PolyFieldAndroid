@@ -20,7 +20,8 @@ fun DeviceConfigurationModal(
     detectedDevices: List<DetectedDevice>,
     initialSelectedDevice: String? = null,
     onUpdateDevice: (String, DeviceState) -> Unit,
-    onRefreshUsb: () -> Unit = {}
+    onRefreshUsb: () -> Unit = {},
+    onTestScoreboard: () -> Unit = {}
 ) {
     var selectedDevice by remember { mutableStateOf(initialSelectedDevice ?: "edm") }
     
@@ -270,6 +271,25 @@ fun DeviceConfigurationModal(
                         label = { Text("Port") },
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    // Test button for scoreboard
+                    if (selectedDevice == "scoreboard") {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        OutlinedButton(
+                            onClick = onTestScoreboard,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Test Scoreboard (3-2-1-0 Countdown)")
+                        }
+
+                        Text(
+                            text = "Tests connection by displaying countdown: 33.33 → 22.22 → 11.11 → 00.00",
+                            fontSize = 12.sp,
+                            color = androidx.compose.ui.graphics.Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
         },

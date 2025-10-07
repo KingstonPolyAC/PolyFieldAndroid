@@ -6,7 +6,9 @@ import android.hardware.usb.UsbDevice
 import android.util.Log
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -23,14 +25,17 @@ class EDMModule(private val context: Context) {
     
     // Device connection states
     private val connectedDevices = mutableMapOf<String, DeviceConnection>()
-    
+
     // EDM device management
     private val edmCommunicationBridge = EDMCommunicationBridge()
     private val serialCommunicationModule = SerialCommunicationModule(context)
     private var selectedEDMDevice: EDMDeviceSpec = EDMDeviceRegistry.getDefaultDevice()
-    
+
     // Track active serial connections
     private val activeSerialPorts = mutableMapOf<String, UsbSerialPort>()
+
+    // Network device module for TCP/IP devices (wind gauges, scoreboards)
+    private val networkDeviceModule = NetworkDeviceModule()
     
     // Native Kotlin calibration management (replaces Go Mobile)
     private val calibrationManager = EDMCalibrationManager(context)
@@ -255,28 +260,43 @@ class EDMModule(private val context: Context) {
     }
     
     /**
-     * Connect to network device
-     * CRITICAL: Never simulates connections in live mode - only real device connections allowed
+     * Connect to network device (wind gauge or scoreboard)
+     * Uses NetworkDeviceModule for TCP/IP communication
      */
     suspend fun connectNetworkDevice(deviceType: String, address: String, port: Int): Map<String, Any> {
         return withContext(Dispatchers.IO) {
             Log.d(TAG, "Connecting to network device: $deviceType at $address:$port")
-            
+
             try {
-                // For network connections, we'll validate when actual communication happens
-                Log.d(TAG, "Network connection requested to $address:$port")
-                val connectionSuccess = true // Assume connection available, actual validation happens during communication
-                
-                if (!connectionSuccess) {
-                    Log.e(TAG, "Failed to establish network connection to $address:$port")
+                // Select appropriate protocol based on device type
+                val protocol: DeviceProtocol = when (deviceType.lowercase()) {
+                    "wind" -> WindGaugeProtocol(WindGaugeProtocol.WindGaugeType.GENERIC)
+                    "scoreboard" -> ScoreboardProtocol(ScoreboardProtocol.ScoreboardType.GENERIC)
+                    "scoreboard_daktronics", "daktronics" -> DaktronicsScoreboardProtocol()
+                    else -> {
+                        Log.e(TAG, "Unknown device type: $deviceType")
+                        return@withContext mapOf(
+                            "success" to false,
+                            "error" to "Unknown device type: $deviceType",
+                            "deviceType" to deviceType
+                        )
+                    }
+                }
+
+                // Connect using NetworkDeviceModule
+                val deviceId = "${deviceType}_network"
+                val result = networkDeviceModule.connect(deviceId, address, port, protocol)
+
+                if (!result.success) {
+                    Log.e(TAG, "Network connection failed: ${result.error}")
                     return@withContext mapOf(
                         "success" to false,
-                        "error" to "Failed to establish network connection to $address:$port",
+                        "error" to result.error.orEmpty(),
                         "deviceType" to deviceType
                     )
                 }
-                
-                // Real network connection established
+
+                // Store connection in legacy map for compatibility
                 val connection = DeviceConnection(
                     deviceType = deviceType,
                     connectionType = "network",
@@ -284,17 +304,18 @@ class EDMModule(private val context: Context) {
                     port = port,
                     isConnected = true
                 )
-                
                 connectedDevices[deviceType] = connection
-                
-                Log.d(TAG, "Real network connection established to $address:$port")
-                
+
+                Log.d(TAG, "Network device connected: ${result.connectionInfo}")
+
                 mapOf(
                     "success" to true,
                     "message" to "Connected to $deviceType via Network at $address:$port",
                     "deviceType" to deviceType,
-                    "connectionType" to "network"
+                    "connectionType" to "network",
+                    "deviceId" to deviceId
                 )
+
             } catch (e: Exception) {
                 Log.e(TAG, "Network connection failed", e)
                 mapOf(
@@ -766,19 +787,30 @@ class EDMModule(private val context: Context) {
     }
     
     /**
-     * Disconnect device
+     * Disconnect device (USB or network)
      */
     fun disconnectDevice(deviceType: String): Boolean {
         Log.d(TAG, "Disconnecting device: $deviceType")
-        
+
         return if (connectedDevices.containsKey(deviceType)) {
+            val connection = connectedDevices[deviceType]
+
+            // Handle network device disconnect (launch in background)
+            if (connection?.connectionType == "network") {
+                GlobalScope.launch(Dispatchers.IO) {
+                    val deviceId = "${deviceType}_network"
+                    networkDeviceModule.disconnect(deviceId)
+                    Log.d(TAG, "Disconnected network device: $deviceId")
+                }
+            }
+
             // Clean up serial connection if exists
             val serialPort = activeSerialPorts.remove(deviceType)
             if (serialPort != null) {
                 serialCommunicationModule.closeSerialPort(serialPort)
                 Log.d(TAG, "Closed serial port for device: $deviceType")
             }
-            
+
             connectedDevices.remove(deviceType)
             true
         } else {
@@ -796,6 +828,98 @@ class EDMModule(private val context: Context) {
         Log.d(TAG, "Device details: ${connectedDevices[deviceType]}")
         return result
     }
+
+    /**
+     * Send command to scoreboard
+     * Displays result, athlete info, or text on connected scoreboard
+     */
+    suspend fun sendScoreboardCommand(command: DeviceCommand): DeviceResponse {
+        return withContext(Dispatchers.IO) {
+            val connection = connectedDevices["scoreboard"]
+                ?: connectedDevices["scoreboard_daktronics"]
+                ?: connectedDevices["daktronics"]
+
+            if (connection == null || !connection.isConnected) {
+                return@withContext DeviceResponse(
+                    success = false,
+                    error = "Scoreboard not connected"
+                )
+            }
+
+            if (connection.connectionType != "network") {
+                return@withContext DeviceResponse(
+                    success = false,
+                    error = "Only network scoreboards are supported"
+                )
+            }
+
+            try {
+                val deviceId = "${connection.deviceType}_network"
+                networkDeviceModule.sendCommand(deviceId, command)
+            } catch (e: Exception) {
+                Log.e(TAG, "Scoreboard command failed: ${e.message}")
+                DeviceResponse(
+                    success = false,
+                    error = e.message ?: "Scoreboard command failed"
+                )
+            }
+        }
+    }
+
+    /**
+     * Test scoreboard with countdown sequence: 3 → 2 → 1 → 0
+     * Useful for verifying scoreboard connection and display functionality
+     */
+    suspend fun testScoreboardCountdown(): DeviceResponse {
+        return withContext(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Starting scoreboard countdown test: 3-2-1-0")
+
+                // Test sequence
+                val numbers = listOf("33.33", "22.22", "11.11", "00.00")
+
+                for ((index, number) in numbers.withIndex()) {
+                    val command = createResultDisplay(
+                        distance = number,
+                        unit = "m",
+                        athleteName = null,
+                        bib = "888",
+                        attempt = index + 1
+                    )
+
+                    val response = sendScoreboardCommand(command)
+
+                    if (!response.success) {
+                        Log.e(TAG, "Countdown test failed at $number: ${response.error}")
+                        return@withContext DeviceResponse(
+                            success = false,
+                            error = "Test failed at $number: ${response.error}"
+                        )
+                    }
+
+                    Log.d(TAG, "Countdown: $number")
+
+                    // Wait 1 second between numbers (except after last)
+                    if (index < numbers.size - 1) {
+                        delay(1000)
+                    }
+                }
+
+                Log.d(TAG, "Scoreboard countdown test completed successfully")
+                DeviceResponse(
+                    success = true,
+                    data = mapOf("test" to "countdown_complete")
+                )
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Scoreboard test failed: ${e.message}", e)
+                DeviceResponse(
+                    success = false,
+                    error = "Test failed: ${e.message}"
+                )
+            }
+        }
+    }
     
     // Serial communication is handled by Go Mobile native module
     // Android only handles UI, permissions, and device management
@@ -808,20 +932,38 @@ class EDMModule(private val context: Context) {
     
     /**
      * Send wind measurement command to device
-     * Wind gauge communication is handled by Go Mobile native module
+     * Uses NetworkDeviceModule for network connections, legacy USB for serial
      */
     private suspend fun sendWindCommand(connection: DeviceConnection): Double {
         return withContext(Dispatchers.IO) {
-            Log.d(TAG, "Wind measurement delegated to Go Mobile native module")
-            
-            try {
-                // Call native Go Mobile module for wind measurement
-                // The native module handles the actual device communication
-                throw Exception("Wind measurement not yet integrated with native module")
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Wind measurement failed", e)
-                throw e
+            when (connection.connectionType) {
+                "network" -> {
+                    Log.d(TAG, "Reading wind from network device")
+
+                    // Send command via NetworkDeviceModule
+                    val deviceId = "${connection.deviceType}_network"
+                    val command = DeviceCommand(type = "READ_WIND", expectResponse = true)
+
+                    val response = networkDeviceModule.sendCommand(deviceId, command)
+
+                    if (!response.success) {
+                        throw Exception(response.error ?: "Wind measurement failed")
+                    }
+
+                    val windSpeed = response.data["windSpeed"] as? Double
+                    if (windSpeed == null) {
+                        throw Exception("Invalid wind speed in response")
+                    }
+
+                    windSpeed
+                }
+                "usb" -> {
+                    Log.d(TAG, "Wind measurement via USB not yet implemented")
+                    throw Exception("Wind measurement via USB not yet integrated with native module")
+                }
+                else -> {
+                    throw Exception("Unsupported connection type: ${connection.connectionType}")
+                }
             }
         }
     }

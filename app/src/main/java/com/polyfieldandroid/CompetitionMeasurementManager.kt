@@ -226,8 +226,12 @@ class CompetitionMeasurementManager(
                 currentMeasurement = result,
                 lastWindReading = windReading
             )
-            
+
             Log.d(TAG, "Real measurement taken: ${result.distance?.let { "%.2f m".format(it) } ?: "FOUL"}")
+
+            // Display result on scoreboard if connected
+            displayOnScoreboard(result)
+
             result
             
         } catch (e: Exception) {
@@ -1149,6 +1153,55 @@ class CompetitionMeasurementManager(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error during background sync: ${e.message}")
+        }
+    }
+
+    /**
+     * Display measurement result on connected scoreboard
+     */
+    private fun displayOnScoreboard(result: MeasurementResult) {
+        viewModelScope.launch {
+            try {
+                // Check if scoreboard is connected
+                if (!edmModule.isDeviceConnected("scoreboard") &&
+                    !edmModule.isDeviceConnected("scoreboard_daktronics") &&
+                    !edmModule.isDeviceConnected("daktronics")) {
+                    Log.d(TAG, "Scoreboard not connected, skipping display")
+                    return@launch
+                }
+
+                // Get athlete info
+                val athlete = athleteManager.getAthleteByBib(result.athleteBib)
+                val athleteName = athlete?.name ?: "Athlete ${result.athleteBib}"
+
+                // Format distance for display
+                val distanceStr = if (result.isValid && result.distance != null) {
+                    "%.2f".format(result.distance)
+                } else {
+                    "FOUL"
+                }
+
+                // Create display command
+                val command = createResultDisplay(
+                    distance = distanceStr,
+                    unit = "m",
+                    athleteName = athleteName,
+                    bib = result.athleteBib,
+                    attempt = result.attemptNumber
+                )
+
+                // Send to scoreboard
+                val response = edmModule.sendScoreboardCommand(command)
+
+                if (response.success) {
+                    Log.d(TAG, "Result displayed on scoreboard: $distanceStr for ${result.athleteBib}")
+                } else {
+                    Log.w(TAG, "Scoreboard display failed: ${response.error}")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error displaying on scoreboard: ${e.message}")
+            }
         }
     }
 }

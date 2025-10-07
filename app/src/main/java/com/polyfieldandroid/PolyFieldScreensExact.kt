@@ -329,8 +329,8 @@ fun DeviceSetupScreenExact(
                 )
                 
                 Spacer(modifier = Modifier.height(20.dp))
-                
-                // Scoreboard for Throws (greyed out)
+
+                // Scoreboard for Throws
                 DeviceStatusCard(
                     deviceType = "Scoreboard",
                     connected = devices.scoreboard.connected,
@@ -340,9 +340,9 @@ fun DeviceSetupScreenExact(
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
                     deviceName = devices.scoreboard.deviceName,
-                    isEnabled = false,
-                    onConnect = { /* Disabled */ },
-                    onConfigure = { /* Disabled */ }
+                    isEnabled = true,
+                    onConnect = { onConnectDevice("scoreboard") },
+                    onConfigure = { onToggleDeviceSetupModal("scoreboard") }
                 )
             }
             
@@ -381,7 +381,7 @@ fun DeviceSetupScreenExact(
                 
                 Spacer(modifier = Modifier.height(20.dp))
                 
-                // Scoreboard for Jumps (greyed out)
+                // Scoreboard
                 DeviceStatusCard(
                     deviceType = "Scoreboard",
                     connected = devices.scoreboard.connected,
@@ -391,9 +391,9 @@ fun DeviceSetupScreenExact(
                     ipAddress = devices.scoreboard.ipAddress,
                     port = devices.scoreboard.port,
                     deviceName = devices.scoreboard.deviceName,
-                    isEnabled = false,
-                    onConnect = { /* Disabled */ },
-                    onConfigure = { /* Disabled */ }
+                    isEnabled = true,
+                    onConnect = { onConnectDevice("scoreboard") },
+                    onConfigure = { onToggleDeviceSetupModal("scoreboard") }
                 )
             }
         }

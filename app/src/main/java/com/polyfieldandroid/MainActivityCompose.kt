@@ -88,7 +88,10 @@ data class DeviceState(
 data class DeviceConfig(
     val edm: DeviceState = DeviceState(),
     val wind: DeviceState = DeviceState(),
-    val scoreboard: DeviceState = DeviceState()
+    val scoreboard: DeviceState = DeviceState(
+        ipAddress = "192.168.0.71",
+        port = 10001
+    )
 )
 
 // Complete Calibration Record
@@ -249,7 +252,7 @@ fun CalibrationSectorLineScreen(
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     Text(
-                        text = "${String.format(java.util.Locale.UK, "%.2f", kotlin.math.floor(calibration.sectorLineDistance * 100) / 100)} m",
+                        text = "${String.format(java.util.Locale.UK, "%.2f", calibration.sectorLineDistance)} m",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1976D2),
@@ -983,10 +986,10 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
         android.util.Log.d("PolyField", "Manual USB refresh requested")
         val usbDevicesResult = getUsbDevices()
         android.util.Log.d("PolyField", "USB refresh result: $usbDevicesResult")
-        
+
         @Suppress("UNCHECKED_CAST")
         val usbDevices = (usbDevicesResult["ports"] as? List<Map<String, Any>>) ?: emptyList()
-        
+
         val detectedDevices = if (usbDevices.isEmpty()) {
             // In live mode, show no devices if none detected
             // In demo mode, add a test device for UI verification
@@ -1014,14 +1017,38 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
                 )
             }
         }
-        
+
         android.util.Log.d("PolyField", "Detected ${detectedDevices.size} USB devices after refresh")
         updateDetectedDevices(detectedDevices)
-        
+
         // Auto-connect if only one device detected after refresh
         if (!_uiState.value.isDemoMode && detectedDevices.size == 1) {
             android.util.Log.d("PolyField", "Single device detected - auto-connecting")
             autoConnectToEDMDevices(detectedDevices)
+        }
+    }
+
+    /**
+     * Test scoreboard with countdown sequence (3-2-1-0)
+     */
+    fun testScoreboardCountdown() {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("PolyField", "Starting scoreboard countdown test")
+                val response = getEDMModule().testScoreboardCountdown()
+
+                if (response.success) {
+                    android.util.Log.d("PolyField", "Scoreboard test completed successfully")
+                    showErrorDialog("Test Complete", "Scoreboard countdown test completed: 33.33 → 22.22 → 11.11 → 00.00")
+                } else {
+                    android.util.Log.e("PolyField", "Scoreboard test failed: ${response.error}")
+                    showErrorDialog("Test Failed", response.error ?: "Scoreboard test failed")
+                }
+
+            } catch (e: Exception) {
+                android.util.Log.e("PolyField", "Scoreboard test error: ${e.message}", e)
+                showErrorDialog("Test Error", "Scoreboard test error: ${e.message}")
+            }
         }
     }
     
@@ -1677,16 +1704,16 @@ class AppViewModel(context: android.content.Context, private val fastInit: Boole
                 if (result.isSuccess) {
                     val data = result.getOrThrow()
                     android.util.Log.d("PolyField", "Clean sector check successful: $data")
-                    
+
                     val sectorCoordinates = data["sectorCoordinates"] as Map<String, Double>
-                    val distanceFromCenter = data["distanceFromCenter"] as Double
+                    val distanceBeyondEdge = data["distanceBeyondEdge"] as Double
                     val measurement = data["measurement"] as String
                     val message = data["message"] as String
-                    
+
                     _uiState.value = _uiState.value.copy(
                         calibration = _uiState.value.calibration.copy(
                             sectorLineSet = true,
-                            sectorLineDistance = distanceFromCenter,
+                            sectorLineDistance = distanceBeyondEdge,
                             sectorLineCoordinates = Pair(sectorCoordinates["x"]!!, sectorCoordinates["y"]!!)
                         ),
                         isLoading = false
@@ -2936,19 +2963,20 @@ fun PolyFieldApp(
                 "EVENT_SELECTION_CONNECTED" -> {
                     EventSelectionScreen(
                         modeManager = modeManager,
+                        currentEventType = uiState.eventType,
                         onEventSelected = { event ->
                             // First, set event type and circle type
                             val eventType = determineEventTypeFromEvent(event)
                             val circleType = getCircleTypeFromEvent(event)
                             viewModel.updateEventType(eventType)
                             viewModel.updateCircleType(circleType)
-                            
+
                             // Then select the event in competition manager
                             competitionManager.selectEvent(event)
-                            
+
                             // Load athletes from the selected event
                             athleteManager.loadAthletesFromEvent(event)
-                            
+
                             // Navigate to device setup for calibration (throws) or direct to athlete checking (jumps)
                             if (eventType == "Throws") {
                                 viewModel.updateScreen("DEVICE_SETUP_CONNECTED")
@@ -3324,7 +3352,8 @@ fun PolyFieldApp(
                     viewModel.updateDeviceConfig(deviceType, deviceConfig)
                     viewModel.toggleDeviceSetupModal()
                 },
-                onRefreshUsb = { viewModel.refreshUsbDevices() }
+                onRefreshUsb = { viewModel.refreshUsbDevices() },
+                onTestScoreboard = { viewModel.testScoreboardCountdown() }
             )
         }
         

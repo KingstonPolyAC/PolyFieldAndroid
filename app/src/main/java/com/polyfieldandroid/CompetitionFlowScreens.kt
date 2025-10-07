@@ -2228,6 +2228,7 @@ fun EventSelectionScreen(
     onStandAloneSelected: () -> Unit,
     onBackToMode: () -> Unit,
     onEditServer: () -> Unit = {},
+    currentEventType: String? = null,
     modifier: Modifier = Modifier
 ) {
     val availableEvents by modeManager.availableEvents.collectAsState()
@@ -2235,6 +2236,25 @@ fun EventSelectionScreen(
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
     val screenHeight = configuration.screenHeightDp
+
+    // Filter events based on current event type
+    val filteredEvents = if (currentEventType != null) {
+        availableEvents.filter { event ->
+            when (currentEventType) {
+                "Throws" -> event.type.contains("throw", ignoreCase = true) ||
+                           event.type.contains("shot", ignoreCase = true) ||
+                           event.type.contains("discus", ignoreCase = true) ||
+                           event.type.contains("hammer", ignoreCase = true) ||
+                           event.type.contains("javelin", ignoreCase = true)
+                "Horizontal Jumps" -> event.type.contains("jump", ignoreCase = true) ||
+                                     event.type.contains("long", ignoreCase = true) ||
+                                     event.type.contains("triple", ignoreCase = true)
+                else -> true
+            }
+        }
+    } else {
+        availableEvents
+    }
     
     Column(
         modifier = Modifier
@@ -2250,7 +2270,7 @@ fun EventSelectionScreen(
         ) {
             // Left Side - Server Events (66%)
             ServerEventsCard(
-                availableEvents = availableEvents,
+                availableEvents = filteredEvents,
                 modeState = modeState,
                 onEventSelected = onEventSelected,
                 onRefreshEvents = { modeManager.refreshEvents() },
@@ -3291,7 +3311,7 @@ fun AthleteInfoCard(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2)
                 )
-                
+
                 // Current position
                 Card(
                     colors = CardDefaults.cardColors(
@@ -3340,7 +3360,7 @@ fun AthleteInfoCard(
                         color = Color(0xFF666666)
                     )
                 }
-                
+
                 // Best mark
                 Column(
                     horizontalAlignment = Alignment.End

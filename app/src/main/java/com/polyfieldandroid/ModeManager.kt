@@ -117,8 +117,8 @@ class ModeManagerViewModel(
     /**
      * Create demo event data for training purposes
      */
-    private fun createDemoEvent(): PolyFieldApiClient.Event {
-        val demoAthletes = listOf(
+    private fun createDemoEvents(): List<PolyFieldApiClient.Event> {
+        val demoAthletesThrows = listOf(
             PolyFieldApiClient.Athlete(bib = "101", order = 1, name = "John Smith", club = "Athletics Club"),
             PolyFieldApiClient.Athlete(bib = "102", order = 2, name = "Sarah Johnson", club = "Track Stars"),
             PolyFieldApiClient.Athlete(bib = "103", order = 3, name = "Mike Davis", club = "Speed Demons"),
@@ -130,18 +130,71 @@ class ModeManagerViewModel(
             PolyFieldApiClient.Athlete(bib = "109", order = 9, name = "Ryan Anderson", club = "Velocity Vaults"),
             PolyFieldApiClient.Athlete(bib = "110", order = 10, name = "Jessica Martinez", club = "Dynamic Throws")
         )
-        
-        return PolyFieldApiClient.Event(
-            id = "DEMO_EVENT_1",
-            name = "Demo Discus Open",
-            type = "Throws",
-            rules = PolyFieldApiClient.EventRules(
-                attempts = 3,
-                cutEnabled = true,
-                cutQualifiers = 8,
-                reorderAfterCut = true
+
+        val demoAthletesJumps = listOf(
+            PolyFieldApiClient.Athlete(bib = "201", order = 1, name = "Marcus Johnson", club = "Jump Squad"),
+            PolyFieldApiClient.Athlete(bib = "202", order = 2, name = "Alicia Williams", club = "Sky High"),
+            PolyFieldApiClient.Athlete(bib = "203", order = 3, name = "James Chen", club = "Leap Masters"),
+            PolyFieldApiClient.Athlete(bib = "204", order = 4, name = "Sophia Rodriguez", club = "Air Force"),
+            PolyFieldApiClient.Athlete(bib = "205", order = 5, name = "Tyrone Jackson", club = "Fly High"),
+            PolyFieldApiClient.Athlete(bib = "206", order = 6, name = "Emily Davis", club = "Jump Stars"),
+            PolyFieldApiClient.Athlete(bib = "207", order = 7, name = "Kevin Brown", club = "Distance Jumpers"),
+            PolyFieldApiClient.Athlete(bib = "208", order = 8, name = "Maya Patel", club = "Spring Loaded")
+        )
+
+        return listOf(
+            // Discus event for Throws
+            PolyFieldApiClient.Event(
+                id = "DEMO_EVENT_DISCUS",
+                name = "Demo Discus Open",
+                type = "Throws - Discus",
+                rules = PolyFieldApiClient.EventRules(
+                    attempts = 3,
+                    cutEnabled = true,
+                    cutQualifiers = 8,
+                    reorderAfterCut = true
+                ),
+                athletes = demoAthletesThrows
             ),
-            athletes = demoAthletes
+            // Shot Put event for Throws
+            PolyFieldApiClient.Event(
+                id = "DEMO_EVENT_SHOT",
+                name = "Demo Shot Put Men",
+                type = "Throws - Shot Put",
+                rules = PolyFieldApiClient.EventRules(
+                    attempts = 3,
+                    cutEnabled = true,
+                    cutQualifiers = 8,
+                    reorderAfterCut = true
+                ),
+                athletes = demoAthletesThrows.take(8)
+            ),
+            // Long Jump event for Horizontal Jumps
+            PolyFieldApiClient.Event(
+                id = "DEMO_EVENT_LONGJUMP",
+                name = "Demo Long Jump Open",
+                type = "Horizontal Jumps - Long Jump",
+                rules = PolyFieldApiClient.EventRules(
+                    attempts = 3,
+                    cutEnabled = false,
+                    cutQualifiers = 8,
+                    reorderAfterCut = false
+                ),
+                athletes = demoAthletesJumps
+            ),
+            // Triple Jump event for Horizontal Jumps
+            PolyFieldApiClient.Event(
+                id = "DEMO_EVENT_TRIPLEJUMP",
+                name = "Demo Triple Jump Women",
+                type = "Horizontal Jumps - Triple Jump",
+                rules = PolyFieldApiClient.EventRules(
+                    attempts = 3,
+                    cutEnabled = false,
+                    cutQualifiers = 8,
+                    reorderAfterCut = false
+                ),
+                athletes = demoAthletesJumps.take(6)
+            )
         )
     }
 
@@ -158,10 +211,9 @@ class ModeManagerViewModel(
                 if (isDemoMode) {
                     // Use demo data instead of connecting to server
                     Log.d(TAG, "Demo mode enabled - using demo event data")
-                    
-                    val demoEvent = createDemoEvent()
-                    val demoEvents = listOf(demoEvent)
-                    
+
+                    val demoEvents = createDemoEvents()
+
                     // Set connected state with demo data
                     _modeState.value = _modeState.value.copy(
                         currentMode = AppMode.CONNECTED,
@@ -172,11 +224,13 @@ class ModeManagerViewModel(
                         ),
                         errorMessage = null
                     )
-                    
+
                     _availableEvents.value = demoEvents
-                    
-                    Log.d(TAG, "Demo mode connected with demo event: ${demoEvent.name}")
-                    Log.d(TAG, "Demo event has ${demoEvent.athletes?.size ?: 0} athletes")
+
+                    Log.d(TAG, "Demo mode connected with ${demoEvents.size} demo events")
+                    demoEvents.forEach { event ->
+                        Log.d(TAG, "  - ${event.name} (${event.type}) with ${event.athletes?.size ?: 0} athletes")
+                    }
                     
                 } else {
                     // Real server connection mode

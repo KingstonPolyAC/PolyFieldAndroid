@@ -268,16 +268,19 @@ class EDMInterface(private val context: Context) {
             
             // Calculate sector point coordinates relative to circle center
             val sectorCoords = calculateThrowCoordinates(reading)
-            
+
             // Distance from circle center
             val distanceFromCenter = sqrt(sectorCoords.first.pow(2) + sectorCoords.second.pow(2))
-            
+
+            // Distance beyond circle edge (same as throw distance calculation)
+            val distanceBeyondEdge = distanceFromCenter - currentCircleRadius!!
+
             // Calculate angle from positive X-axis for sector line
             val angleFromXAxis = atan2(sectorCoords.second, sectorCoords.first)
             val angleDegrees = Math.toDegrees(angleFromXAxis)
-            
-            Log.d(TAG, "Sector point: (${String.format("%.3f", sectorCoords.first)}, ${String.format("%.3f", sectorCoords.second)}), distance=${String.format("%.2f", distanceFromCenter)}m, angle=${String.format("%.1f", angleDegrees)}°")
-            
+
+            Log.d(TAG, "Sector point: (${String.format("%.3f", sectorCoords.first)}, ${String.format("%.3f", sectorCoords.second)}), distance from center=${String.format("%.2f", distanceFromCenter)}m, beyond edge=${String.format("%.2f", distanceBeyondEdge)}m, angle=${String.format("%.1f", angleDegrees)}°")
+
             Result.success(mapOf(
                 "success" to true,
                 "sectorCoordinates" to mapOf(
@@ -285,8 +288,9 @@ class EDMInterface(private val context: Context) {
                     "y" to sectorCoords.second
                 ),
                 "distanceFromCenter" to distanceFromCenter,
+                "distanceBeyondEdge" to distanceBeyondEdge,
                 "angleFromXAxis" to angleDegrees,
-                "measurement" to "${String.format("%.2f", distanceFromCenter)} m",
+                "measurement" to "${String.format("%.2f", distanceBeyondEdge)} m",
                 "message" to "Sector point measured successfully"
             ))
             

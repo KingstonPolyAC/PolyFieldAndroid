@@ -683,7 +683,7 @@ fun CalibrationVerifyEdgeScreenExact(
                         
                         // Results details - simplified format
                         Text(
-                            text = "Measured radius: ${String.format(java.util.Locale.UK, "%.2f", kotlin.math.floor(result.averageRadius * 100) / 100)}m\n" +
+                            text = "Measured radius: ${String.format(java.util.Locale.UK, "%.3f", result.averageRadius)}m\n" +
                                    "Deviation: ${if (result.deviation >= 0) "+" else ""}${String.format(java.util.Locale.UK, "%.1f", result.deviation * 1000)}mm",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Medium,
