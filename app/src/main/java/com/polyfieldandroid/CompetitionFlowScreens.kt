@@ -2800,23 +2800,25 @@ fun CompetitionFlowScreen(
             }
             
             // Measurement interface
-            if (event.type.lowercase().contains("throw") || 
-                event.type.lowercase().contains("shot") || 
+            if (event.type.lowercase().contains("throw") ||
+                event.type.lowercase().contains("shot") ||
                 event.type.lowercase().contains("discus") ||
                 event.type.lowercase().contains("hammer")) {
-                
+
                 ThrowsMeasurementInterface(
                     measurement = uiState.measurement,
                     isLoading = uiState.isLoading,
                     onMeasureDistance = { appViewModel.measureDistance() },
-                    screenWidth = screenWidth
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
                 )
             } else {
                 HorizontalJumpsMeasurementInterface(
                     windMeasurement = uiState.windMeasurement,
                     isLoading = uiState.isLoading,
                     onMeasureWind = { appViewModel.measureWind() },
-                    screenWidth = screenWidth
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
                 )
             }
             

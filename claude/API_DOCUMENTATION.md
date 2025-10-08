@@ -581,13 +581,123 @@ console.log("Wind speed:", windSpeed);
 ```
 
 ### Scoreboard Integration
-```javascript
-// Connect scoreboard
-await ConnectNetworkDevice("scoreboard", "192.168.1.50", 8080);
 
-// Display throw result
+#### Daktronics Scoreboard Protocol
+The system supports Daktronics TI-2009 scoreboards with binary 7-segment encoding protocol.
+
+**Connection**:
+```javascript
+// Connect Daktronics scoreboard
+await ConnectNetworkDevice("scoreboard_daktronics", "192.168.0.71", 10001);
+```
+
+**Display Format**:
+- Binary protocol with 15-byte messages
+- 7-segment LED encoding (0x00-0xFF)
+- Handshake: 0x55 → 0x06 ACK
+- Automatic decimal point positioning
+- Two-message sequence: performance + athlete data
+
+**Test Function**:
+```javascript
+// Run countdown test (3-2-1-0)
+await testScoreboardCountdown();
+// Displays: 33.33 → 22.22 → 11.11 → 00.00
+```
+
+**Result Display**:
+```javascript
+// Display throw result (automatic via measurement system)
+// Format: XX.XX m with athlete bib and attempt number
 await SendToScoreboard("45.67");
 
-// Display wind reading  
+// Display wind reading
 await SendToScoreboard("+1.2 m/s");
 ```
+
+#### Generic Scoreboard
+```javascript
+// Connect generic scoreboard
+await ConnectNetworkDevice("scoreboard", "192.168.1.50", 8080);
+
+// Display result
+await SendToScoreboard("45.67");
+```
+
+### Wind Gauge Network Support
+
+#### Supported Protocols
+1. **Generic ASCII**: Simple text-based protocol
+2. **Gill WindMaster**: Q,123,+002.30,M,00,\r\n format
+3. **Lynx 3002**: WS:+2.3,WD:045\r\n format
+4. **NMEA**: $WIMWV,123.4,R,2.3,M,A*checksum\r\n format
+
+**Connection**:
+```javascript
+// Connect wind gauge via TCP/IP
+await ConnectNetworkDevice("wind", "192.168.1.40", 9001);
+
+// Take wind reading
+const windData = await MeasureWind();
+// Returns: { speed: 2.3, direction: 123, unit: "m/s" }
+```
+
+## Calibration Enhancements
+
+### Edge Verification (3 Decimal Places)
+Edge verification now displays measured radius with 3 decimal precision:
+```
+Measured radius: 1.068m
+Deviation: +0.5mm
+```
+
+### Sector Line Distance (From Circle Edge)
+Sector line measurements now correctly display distance from circle edge, not center:
+```
+✓ Sector Line Measured
+15.23 m
+beyond circle edge
+```
+
+**Calculation**:
+- `distanceBeyondEdge = distanceFromCenter - circleRadius`
+- Example: 16.5m from center - 1.25m radius = 15.25m beyond edge
+
+## Demo Mode
+
+### Multiple Event Types
+Demo mode now includes events for both throws and horizontal jumps:
+
+**Throws Events**:
+- Demo Discus Open (10 athletes, 3 attempts, cut after R3)
+- Demo Shot Put Men (8 athletes, 3 attempts, cut after R3)
+
+**Horizontal Jumps Events**:
+- Demo Long Jump Open (8 athletes, 3 attempts, no cut)
+- Demo Triple Jump Women (6 athletes, 3 attempts, no cut)
+
+**Event Filtering**:
+Events are automatically filtered by type when selecting event category:
+- "Throws" → Shows only discus, shot put, hammer, javelin events
+- "Horizontal Jumps" → Shows only long jump, triple jump events
+
+## Responsive Design
+
+### Screen Size Adaptation
+All UI elements now scale responsively based on screen dimensions:
+
+**Dynamic Sizing**:
+- Heights: `maxOf(minSize, screenHeight * percentage)`
+- Font sizes: `maxOf(minSize, screenWidth * percentage)`
+- Padding: `maxOf(minSize, screenWidth * percentage)`
+
+**Examples**:
+- Distance display: `maxOf(56f, screenWidth * 0.09f).sp`
+- Measurement row: `maxOf(120f, screenHeight * 0.18f).dp`
+- Statistics text: `maxOf(22f, screenWidth * 0.032f).sp`
+
+**Benefits**:
+- No text overflow on small screens
+- Proportional scaling across all screen sizes
+- Automatic landscape/portrait adaptation
+- Optimal readability on tablets and phones

@@ -33,11 +33,12 @@ fun MeasurementScreenExact(
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp
-    
+    val screenHeight = configuration.screenHeightDp
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(maxOf(12f, screenWidth * 0.015f).dp)
     ) {
         // Title
         Text(
@@ -48,35 +49,38 @@ fun MeasurementScreenExact(
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 30.dp)
+                .padding(bottom = maxOf(20f, screenHeight * 0.025f).dp)
         )
-        
+
         if (eventType == "Throws") {
             // Throws measurement interface - NO WIND for throws
             ThrowsMeasurementInterface(
                 measurement = measurement,
                 isLoading = isLoading,
                 onMeasureDistance = onMeasureDistance,
-                screenWidth = screenWidth
+                screenWidth = screenWidth,
+                screenHeight = screenHeight
             )
-            
+
             // Session statistics
             if (throwCoordinates.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(30.dp))
-                
+                Spacer(modifier = Modifier.height(maxOf(20f, screenHeight * 0.025f).dp))
+
                 SessionStatistics(
                     throwCoordinates = throwCoordinates,
-                    screenWidth = screenWidth
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
                 )
             }
-            
+
         } else {
-            // Horizontal Jumps measurement interface  
+            // Horizontal Jumps measurement interface
             HorizontalJumpsMeasurementInterface(
                 windMeasurement = windMeasurement,
                 isLoading = isLoading,
                 onMeasureWind = onMeasureWind,
-                screenWidth = screenWidth
+                screenWidth = screenWidth,
+                screenHeight = screenHeight
             )
         }
     }
@@ -87,14 +91,15 @@ fun ThrowsMeasurementInterface(
     measurement: String,
     isLoading: Boolean,
     onMeasureDistance: () -> Unit,
-    screenWidth: Int
+    screenWidth: Int,
+    screenHeight: Int
 ) {
     // Main measurement row - large distance display + measure button
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp),
-        horizontalArrangement = Arrangement.spacedBy(15.dp),
+            .height(maxOf(120f, screenHeight * 0.18f).dp),
+        horizontalArrangement = Arrangement.spacedBy(maxOf(12f, screenWidth * 0.015f).dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Distance display
@@ -102,7 +107,7 @@ fun ThrowsMeasurementInterface(
             modifier = Modifier
                 .weight(0.6f)
                 .fillMaxHeight(),
-            shape = RoundedCornerShape(15.dp),
+            shape = RoundedCornerShape(maxOf(12f, screenWidth * 0.015f).dp),
             colors = CardDefaults.cardColors(
                 containerColor = Color.White
             ),
@@ -120,18 +125,18 @@ fun ThrowsMeasurementInterface(
                     color = Color(0xFF666666)
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(maxOf(6f, screenHeight * 0.01f).dp))
 
                 Text(
                     text = measurement.ifEmpty { "--" },
-                    fontSize = maxOf(56f, screenWidth * 0.09f).sp, // Reduced for landscape to prevent overflow
+                    fontSize = maxOf(56f, screenWidth * 0.09f).sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1976D2),
                     textAlign = TextAlign.Center
                 )
             }
         }
-        
+
         // Measure button
         Button(
             onClick = onMeasureDistance,
@@ -139,14 +144,14 @@ fun ThrowsMeasurementInterface(
             modifier = Modifier
                 .weight(0.35f)
                 .fillMaxHeight(),
-            shape = RoundedCornerShape(15.dp),
+            shape = RoundedCornerShape(maxOf(12f, screenWidth * 0.015f).dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF1976D2)
             )
         ) {
             Text(
                 text = if (isLoading) "Measuring..." else "MEASURE",
-                fontSize = 24.sp,
+                fontSize = maxOf(20f, screenWidth * 0.028f).sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center
@@ -161,19 +166,20 @@ fun HorizontalJumpsMeasurementInterface(
     windMeasurement: String,
     isLoading: Boolean,
     onMeasureWind: () -> Unit,
-    screenWidth: Int
+    screenWidth: Int,
+    screenHeight: Int
 ) {
     // Wind measurement for horizontal jumps
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(15.dp),
+        shape = RoundedCornerShape(maxOf(12f, screenWidth * 0.015f).dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
         Column(
-            modifier = Modifier.padding(30.dp),
+            modifier = Modifier.padding(maxOf(20f, screenWidth * 0.025f).dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -182,37 +188,37 @@ fun HorizontalJumpsMeasurementInterface(
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF333333)
             )
-            
-            Spacer(modifier = Modifier.height(20.dp))
-            
+
+            Spacer(modifier = Modifier.height(maxOf(16f, screenHeight * 0.02f).dp))
+
             Text(
                 text = "Current Wind Speed:",
-                fontSize = 18.sp,
+                fontSize = maxOf(16f, screenWidth * 0.022f).sp,
                 color = Color(0xFF666666)
             )
-            
+
             Text(
                 text = windMeasurement.ifEmpty { "--" },
-                fontSize = 48.sp, // Increased from 32sp to 48sp for field visibility
+                fontSize = maxOf(40f, screenWidth * 0.06f).sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1976D2),
-                modifier = Modifier.padding(vertical = 15.dp)
+                modifier = Modifier.padding(vertical = maxOf(12f, screenHeight * 0.015f).dp)
             )
-            
+
             Button(
                 onClick = onMeasureWind,
                 enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp),
-                shape = RoundedCornerShape(15.dp),
+                    .height(maxOf(50f, screenHeight * 0.08f).dp),
+                shape = RoundedCornerShape(maxOf(12f, screenWidth * 0.015f).dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF4CAF50)
                 )
             ) {
                 Text(
                     text = if (isLoading) "Reading Wind..." else "Measure Wind",
-                    fontSize = 24.sp,
+                    fontSize = maxOf(20f, screenWidth * 0.028f).sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
@@ -224,13 +230,14 @@ fun HorizontalJumpsMeasurementInterface(
 @Composable
 fun SessionStatistics(
     throwCoordinates: List<ThrowCoordinate>,
-    screenWidth: Int
+    screenWidth: Int,
+    screenHeight: Int
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(80.dp), // Fixed height to ensure visibility
-        shape = RoundedCornerShape(15.dp),
+            .height(maxOf(70f, screenHeight * 0.1f).dp),
+        shape = RoundedCornerShape(maxOf(12f, screenWidth * 0.015f).dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
@@ -240,27 +247,30 @@ fun SessionStatistics(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(maxOf(12f, screenWidth * 0.015f).dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             StatItem(
                 label = "Total Throws",
-                value = throwCoordinates.size.toString()
+                value = throwCoordinates.size.toString(),
+                screenWidth = screenWidth
             )
-            
+
             StatItem(
                 label = "Longest",
                 value = if (throwCoordinates.isNotEmpty()) {
                     String.format(java.util.Locale.UK, "%.2fm", throwCoordinates.maxOf { it.distance })
-                } else "0.00m"
+                } else "0.00m",
+                screenWidth = screenWidth
             )
 
             StatItem(
                 label = "Average",
                 value = if (throwCoordinates.isNotEmpty()) {
                     String.format(java.util.Locale.UK, "%.2fm", throwCoordinates.map { it.distance }.average())
-                } else "0.00m"
+                } else "0.00m",
+                screenWidth = screenWidth
             )
         }
     }
@@ -269,21 +279,22 @@ fun SessionStatistics(
 @Composable
 fun StatItem(
     label: String,
-    value: String
+    value: String,
+    screenWidth: Int
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = value,
-            fontSize = 28.sp, // Increased from 20sp to 28sp for better field visibility
+            fontSize = maxOf(22f, screenWidth * 0.032f).sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1976D2)
         )
-        
+
         Text(
             text = label,
-            fontSize = 12.sp,
+            fontSize = maxOf(11f, screenWidth * 0.014f).sp,
             color = Color(0xFF666666),
             textAlign = TextAlign.Center
         )
